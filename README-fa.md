@@ -29,6 +29,7 @@
 ### 🧬 Fragment + Fingerprint
 <ul dir="rtl" style="direction: rtl; text-align: right;">
   <li><b>جای‌گذاری و ارتقا</b>: لینک تکی یا چندگانه (تک‌به‌تک در هر خط) از <code>vless://</code> یا <code>trojan://</code> را جای‌گذاری کنید و لینک‌های ارتقایافته با پارامترهای <code>cs</code>، <code>fm</code> و <code>fp</code> دریافت کنید.</li>
+  <li><b>کانفیگ کامل JSON</b>: به‌جای لینک، کل کانفیگ JSON ایکس‌ری را جای‌گذاری کنید — مثلاً خروجی <b>Export full configuration</b> در v2rayNG / PattNG یا یک کانفیگ <b>Custom</b>. تب به‌صورت خودکار آن را تشخیص می‌دهد (ورودی‌ای که با <code>{</code> یا <code>[</code> شروع شود)، روی هر outbound از نوع VLESS / VMess / Trojan مقدار <code>fp</code> را در <code>tlsSettings.fingerprint</code> (یا <code>realitySettings.fingerprint</code>)، <code>cs</code> را در <code>tlsSettings.cipherSuites</code> و <code>fm</code> را در <code>streamSettings.finalmask</code> می‌نویسد و JSON کامل را برمی‌گرداند؛ بقیه بخش‌ها (<code>dns</code>، <code>routing</code>، <code>inbounds</code>، <code>policy</code>، <code>remarks</code>، outboundهای دیگر و <code>sockopt</code> موجود) دست‌نخورده می‌مانند. تغییر سرور فقط وقتی اعمال می‌شود که کانفیگ یک outbound پراکسی داشته باشد. دانلود، فایل <code>enhanced-config.json</code> می‌سازد.</li>
   <li><b>پشتیبانی از چندین کانفیگ همزمان</b>: امکان جای‌گذاری لیست انبوه کانفیگ‌ها جهت پردازش، اعتبارسنجی و ارتقای دسته‌جمعی بدون تداخل در remark کانفیگ‌ها.</li>
   <li><b>تغییر سرور</b>: فیلد سرور (IP/دامنه) فقط برای کانفیگ تکی به‌صورت خودکار از URL استخراج می‌شود و قابل ویرایش است. در حالت چند کانفیگ، این فیلد خالی می‌ماند و فقط اگر مقدار دلخواه وارد کنید روی همه کانفیگ‌ها اعمال می‌شود (پشتیبانی از IPv4، IPv6 و دامنه).</li>
   <li><b>اثر انگشت (Fingerprint)</b>: پیش‌فرض <code>unsafe</code> با گزینه‌های <code>chrome</code>، <code>firefox</code>، <code>safari</code>، <code>random</code> و <code>none</code>.</li>
@@ -105,7 +106,7 @@
   <li>به تب <b>Fragment + Fingerprint</b> بروید.</li>
   <li>لینک <b>VLESS</b> یا <b>Trojan</b> خود را جای‌گذاری کنید.</li>
   <li>در صورت نیاز گزینه‌ها را تنظیم کنید: تغییر سرور (به‌صورت خودکار از URL پر می‌شود)، اثر انگشت، لیست Cipher Suites و Final Mask.</li>
-  <li>روی <b>«Enhance URL»</b> کلیک کنید و لینک حاصل را کپی کرده و در کلاینت خود وارد کنید.</li>
+  <li>روی <b>«Enhance URL»</b> کلیک کنید و لینک حاصل را کپی کرده و در کلاینت خود وارد کنید.<br><b>کانفیگ کامل JSON</b>: به‌جای لینک، کل JSON خروجی‌گرفته‌شده را در همین کادر جای‌گذاری کنید؛ دکمه به <b>«Enhance JSON»</b> تغییر می‌کند. نتیجه را کپی کنید (یا <code>enhanced-config.json</code> را دانلود کنید) و در کلاینت به‌عنوان <b>Custom config</b> (از کلیپ‌بورد یا فایل) وارد کنید.</li>
   <li>برای کانفیگ‌های انبوه، به ساب‌تب <b>📥 Subscription</b> بروید: لینک اشتراک را جای‌گذاری کنید و <b>«Fetch & Enhance»</b> را بزنید — یا محتوای آن را جای‌گذاری کنید (یا فایل <code>.txt</code> را روی کارت بیندازید) تا دانلود لازم نباشد. اگر دانلود بسته بود، ۳ قدم نمایش‌داده‌شده را دنبال کنید (باز کردن لینک با <b>Open link</b>، کپی، جای‌گذاری و Fetch مجدد). کانفیگ‌های ارتقایافته را کپی یا دانلود کنید (<code>.txt</code> یا <code>base64 .txt</code>).</li>
 </ol>
 

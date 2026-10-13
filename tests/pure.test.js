@@ -9,6 +9,7 @@ const {
     getEchQueryServer, ECH_DNS_DEFAULT, isBareEchDomain, normalizeEchInput,
     ECH_PRESETS, FRAGMENT_PRESETS, SUB_SCHEME,
     enhanceUrlCore, enhanceEchUrlCore,
+    looksLikeJsonConfig, parseFullConfigJson, summarizeFullConfig, enhanceFullConfigCore,
     subIsLink, subLooksLikeContent, subLooksLikeProxy, subValidate,
     SUB_IDLE_MS, SUB_TOTAL_MS, SUB_TOO_LARGE_MSG,
     extractSubConfigs, subIsBlockedError, subErrorText,
@@ -1524,5 +1525,112 @@ describe('buildSingboxOutbound', () => {
             server: 'x.example.com',
             server_port: 51820
         });
+    });
+});
+
+describe('full Xray JSON config (Fragment tab)', () => {
+    const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'v2rayng-full-config.json'), 'utf8');
+    const FM = FRAGMENT_PRESETS.v2;
+    const OPTS = { server: '', fp: 'firefox', cs: 'TLS_AES_128_GCM_SHA256', fm: FM };
+
+    it('detects JSON input by a leading { or [', () => {
+        assert.equal(looksLikeJsonConfig('  {"a":1}'), true);
+        assert.equal(looksLikeJsonConfig('[{}]'), true);
+        assert.equal(looksLikeJsonConfig('vless://x@y:1'), false);
+        assert.equal(looksLikeJsonConfig(''), false);
+    });
+
+    it('rejects invalid JSON and non-config objects', () => {
+        assert.match(parseFullConfigJson('{bad').error, /Invalid JSON/);
+        assert.match(parseFullConfigJson('{"a":1}').error, /outbounds/);
+        assert.match(parseFullConfigJson('[]').error, /empty/);
+        assert.match(summarizeFullConfig('{"outbounds":[{"protocol":"freedom"}]}').error, /No VLESS/);
+    });
+
+    it('summarizes the proxy outbound of a v2rayNG export', () => {
+        const s = summarizeFullConfig(FIXTURE);
+        assert.equal(s.configCount, 1);
+        assert.equal(s.outbounds.length, 1);
+        assert.deepEqual(
+            { ...s.outbounds[0] },
+            { config: 0, remarks: 'Sample-443', tag: 'proxy', protocol: 'vless', server: 'example.com', port: '443', network: 'ws', security: 'tls' }
+        );
+    });
+
+    it('writes fp / cs / finalmask into the proxy outbound', () => {
+        const r = enhanceFullConfigCore(FIXTURE, OPTS);
+        assert.equal(r.enhanced, 1);
+        assert.equal(r.tls, 1);
+        const out = JSON.parse(r.json);
+        const ss = out.outbounds[0].streamSettings;
+        assert.equal(ss.tlsSettings.fingerprint, 'firefox');
+        assert.equal(ss.tlsSettings.cipherSuites, 'TLS_AES_128_GCM_SHA256');
+        assert.deepEqual(ss.finalmask, JSON.parse(FM));
+        // existing stream fields kept
+        assert.deepEqual(ss.sockopt, { domainStrategy: 'UseIPv4' });
+        assert.equal(ss.tlsSettings.serverName, 'example.com');
+        assert.deepEqual(ss.tlsSettings.alpn, ['http/1.1']);
+        assert.deepEqual(ss.wsSettings, { headers: { Host: 'example.com' }, path: '/assets' });
+    });
+
+    it('preserves everything outside the proxy outbound', () => {
+        const before = JSON.parse(FIXTURE);
+        const out = JSON.parse(enhanceFullConfigCore(FIXTURE, OPTS).json);
+        for (const key of ['dns', 'inbounds', 'log', 'policy', 'remarks', 'routing', 'stats']) {
+            assert.deepEqual(out[key], before[key], key);
+        }
+        assert.deepEqual(out.outbounds.slice(1), before.outbounds.slice(1));
+        assert.deepEqual(out.outbounds[0].settings, before.outbounds[0].settings);
+        assert.deepEqual(Object.keys(out), Object.keys(before));
+    });
+
+    it('keeps the existing fingerprint when fp is none, and skips empty cs / fm', () => {
+        const out = JSON.parse(enhanceFullConfigCore(FIXTURE, { fp: 'none', cs: '', fm: '' }).json);
+        const ss = out.outbounds[0].streamSettings;
+        assert.equal(ss.tlsSettings.fingerprint, 'chrome');
+        assert.equal('cipherSuites' in ss.tlsSettings, false);
+        assert.equal('finalmask' in ss, false);
+    });
+
+    it('applies the server override only for a single proxy outbound', () => {
+        const one = JSON.parse(enhanceFullConfigCore(FIXTURE, { ...OPTS, server: '1.2.3.4' }).json);
+        assert.equal(one.outbounds[0].settings.vnext[0].address, '1.2.3.4');
+        assert.equal(one.outbounds[0].streamSettings.tlsSettings.serverName, 'example.com');
+        const cfg = JSON.parse(FIXTURE);
+        cfg.outbounds.push({ protocol: 'trojan', settings: { servers: [{ address: 'b.example', port: 443 }] }, streamSettings: { security: 'tls' }, tag: 'p2' });
+        const r = enhanceFullConfigCore(JSON.stringify(cfg), { ...OPTS, server: '1.2.3.4' });
+        assert.equal(r.enhanced, 2);
+        assert.equal(r.serverApplied, false);
+        const two = JSON.parse(r.json);
+        assert.equal(two.outbounds[0].settings.vnext[0].address, 'example.com');
+        assert.equal(two.outbounds[3].settings.servers[0].address, 'b.example');
+        assert.equal(two.outbounds[3].streamSettings.tlsSettings.fingerprint, 'firefox');
+    });
+
+    it('sets only fp on REALITY and nothing on plaintext outbounds', () => {
+        const cfg = { outbounds: [
+            { protocol: 'vless', settings: { vnext: [{ address: 'r.example', port: 443 }] }, streamSettings: { network: 'tcp', security: 'reality', realitySettings: { fingerprint: 'chrome' } } },
+            { protocol: 'vmess', settings: { vnext: [{ address: 'p.example', port: 80 }] }, streamSettings: { network: 'ws' } }
+        ] };
+        const r = enhanceFullConfigCore(JSON.stringify(cfg), OPTS);
+        assert.equal(r.tls, 0);
+        const out = JSON.parse(r.json);
+        assert.equal(out.outbounds[0].streamSettings.realitySettings.fingerprint, 'firefox');
+        assert.equal('finalmask' in out.outbounds[0].streamSettings, false);
+        assert.deepEqual(out.outbounds[1].streamSettings, { network: 'ws' });
+    });
+
+    it('accepts an array of configs and returns an array', () => {
+        const arr = '[' + FIXTURE + ',' + FIXTURE + ']';
+        const r = enhanceFullConfigCore(arr, OPTS);
+        assert.equal(r.enhanced, 2);
+        const out = JSON.parse(r.json);
+        assert.equal(Array.isArray(out), true);
+        assert.equal(out[1].outbounds[0].streamSettings.tlsSettings.fingerprint, 'firefox');
+    });
+
+    it('reports an invalid Final Mask instead of writing it', () => {
+        assert.match(enhanceFullConfigCore(FIXTURE, { ...OPTS, fm: '{not json' }).error, /Final Mask/);
+        assert.match(enhanceFullConfigCore(FIXTURE, { ...OPTS, fm: '[1]' }).error, /JSON object/);
     });
 });

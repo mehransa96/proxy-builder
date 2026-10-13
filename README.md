@@ -26,6 +26,7 @@ All processing happens in your browser. No data is sent to any server — fetchi
 
 ### 🧬 Fragment + Fingerprint
 - **Paste & Enhance**: Paste single or multiple `vless://` or `trojan://` URLs (one per line) and get enhanced links with `cs`, `fm` and `fp` parameters added.
+- **Full JSON configs**: Paste a whole Xray JSON config instead of a link — e.g. one exported with **Export full configuration** in v2rayNG / PattNG, or a **Custom** config. The tab detects it automatically (input starting with `{` or `[`), writes `fp` to `tlsSettings.fingerprint` (or `realitySettings.fingerprint`), `cs` to `tlsSettings.cipherSuites` and `fm` to `streamSettings.finalmask` on every VLESS / VMess / Trojan outbound, and returns the full JSON with everything else (`dns`, `routing`, `inbounds`, `policy`, `remarks`, other outbounds, existing `sockopt`) unchanged. The server override applies only when the config has a single proxy outbound. Download saves `enhanced-config.json`.
 - **Multi-Config Support**: Paste bulk proxy URL lists to parse, validate, and batch enhance all URLs cleanly without remark collision.
 - **Server Override**: The server (IP/domain) field is auto-filled from the URL for a single config and is user-editable. With multiple configs the field stays empty and only applies to all configs if you type a custom value (supports IPv4, IPv6 and domains).
 - **Fingerprint**: Default `unsafe`, with `chrome`, `firefox`, `safari`, `random` and `none` options.
@@ -77,6 +78,7 @@ For full clipboard support, serve this folder locally — e.g. `python3 -m http.
 2. Paste your **VLESS** or **Trojan** URL.
 3. Adjust the options if needed: server override (auto-filled from the URL), fingerprint, cipher suites, final mask.
 4. Click **"Enhance URL"** and copy the resulting link — import it into your client.
+   - **Full JSON config**: paste the whole exported JSON into the same box instead; the button becomes **"Enhance JSON"**. Copy the result (or download `enhanced-config.json`) and import it in your client as a **Custom config** (from clipboard or file).
 5. For bulk configs, switch to the **📥 Subscription** sub-tab: paste your subscription **link** and click **"Fetch & Enhance"** — or paste its **contents** (or drop a saved `.txt` file) to skip fetching. If fetching is blocked, follow the 3 steps shown (open the link with **Open link**, copy, paste, fetch again). Copy or download the enhanced configs (`.txt` or base64 `.txt`).
 
 #### ✅ Client Requirements

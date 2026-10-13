@@ -578,7 +578,7 @@
                         <div>
                             <h2>Proxy URL Enhancer</h2>
                             <p class="card-hint">Adds <code>cs</code> (cipher suites), <code>fm</code> (fragment mask)
-                                and <code>fp</code> to VLESS / Trojan URLs (supports single or multiple URLs). You can also drop a saved .txt file onto this card.</p>
+                                and <code>fp</code> to VLESS / Trojan URLs (supports single or multiple URLs) — or paste a full Xray JSON config (v2rayNG "Export full configuration" / Custom) to patch it in place. You can also drop a saved .txt file onto this card.</p>
                         </div>
                     </div>
                     <div class="card-header-right">
@@ -587,7 +587,7 @@
                 </div>
                 <div class="input-group">
                     <textarea id="enhancer-input" class="config-input"
-                        placeholder="Paste VLESS or Trojan URL(s) here (one per line)...&#10;e.g. vless://uuid@address:port?params#remark"
+                        placeholder="Paste VLESS or Trojan URL(s) here (one per line)...&#10;e.g. vless://uuid@address:port?params#remark&#10;— or paste a full Xray JSON config { ... }"
                         spellcheck="false"></textarea>
                     <button class="btn-clear" id="enhancer-clear" title="Clear">✕</button>
                 </div>
@@ -787,4 +787,4 @@
     <script src="script.js"></script>
 </body>
 
-</html>
+</html>
