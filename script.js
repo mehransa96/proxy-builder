@@ -150,6 +150,15 @@
         });
     }
 
+    function enhanceFullConfig(raw) {
+        return enhanceFullConfigCore(raw, {
+            server: enhancerServer.value,
+            fp: enhancerFp.value,
+            cs: enhancerCs.value,
+            fm: enhancerFm.value
+        });
+    }
+
     // Fragment URL-input/enhance originals removed (026): the fragTab
     // createEnhanceTab instance below owns this tab now (IDs, filenames,
     // option controls kept).
@@ -1133,7 +1142,7 @@
     // signatures via enhanceSingle/enhanceBulk, never rewrites them.
     function createEnhanceTab(cfg) {
         const {
-            enhanceSingle, enhanceBulk,
+            enhanceSingle, enhanceBulk, enhanceJson,
             ids, urlJoin, subJoin, remarkJoiner,
             corsGuideStep3, exportNames, failureCopy,
             showProtocolTag, busyGuardOnInput,
@@ -1194,6 +1203,10 @@
             outputUrl.textContent = '';
             outputRemark.textContent = '';
             const val = urlInput.value.trim();
+            if (enhanceJson && looksLikeJsonConfig(val)) {
+                onTabJsonInput(val);
+                return;
+            }
             const lines = extractLines(val);
             let parsedList = [];
             let unsupportedCount = 0;
@@ -1268,8 +1281,92 @@
             urlHint.style.color = count > 0 ? '#4cdf86' : '';
         }
 
+        // Full Xray JSON config (v2rayNG "Export full configuration"):
+        // detected by a leading { or [ and patched as a whole document.
+        function onTabJsonInput(val) {
+            const summary = summarizeFullConfig(val);
+            urlCard.classList.remove('valid', 'invalid');
+            if (summary.error) {
+                renderParsedInfo({ error: summary.error }, urlParsed);
+                updateProtocolTag(urlProtocolTag, null);
+                urlCard.classList.add('invalid');
+                btnUrlEnhance.disabled = true;
+                btnUrlEnhance.innerHTML = '<span class="btn-icon">✨</span> Enhance JSON';
+                urlHint.textContent = 'Paste a full Xray JSON config with a VLESS / VMess / Trojan outbound';
+                urlHint.style.color = '';
+                return;
+            }
+            const obs = summary.outbounds;
+            if (obs.length === 1) {
+                const firstServer = obs[0].server;
+                const current = serverEl.value.trim();
+                if (!current || current === lastAutoServerLocal || current === firstServer) {
+                    serverEl.value = firstServer;
+                    lastAutoServerLocal = firstServer;
+                }
+            } else {
+                const current = serverEl.value.trim();
+                if (!current || current === lastAutoServerLocal) {
+                    serverEl.value = '';
+                    lastAutoServerLocal = '';
+                }
+            }
+            const rows = [['Format', summary.configCount > 1
+                ? 'Full Xray JSON (' + summary.configCount + ' configs)'
+                : 'Full Xray JSON config']];
+            const remarks = Array.from(new Set(obs.map(ob => ob.remarks).filter(Boolean)));
+            if (remarks.length === 1) rows.push(['Remarks', truncateStr(remarks[0], 40)]);
+            obs.forEach((ob, i) => {
+                rows.push([
+                    '#' + (i + 1) + ' ' + ob.protocol.toUpperCase() + (ob.tag ? ' (' + truncateStr(ob.tag, 20) + ')' : ''),
+                    ob.server + ':' + ob.port + ' · ' + ob.network + ' + ' + ob.security
+                ]);
+            });
+            urlParsed.innerHTML = rows.map(([label, value]) =>
+                `<div class="info-row">
+                    <span class="info-label">${escapeHtml(String(label))}</span>
+                    <span class="info-value">${escapeHtml(String(value))}</span>
+                </div>`
+            ).join('');
+            urlProtocolTag.textContent = 'JSON';
+            urlProtocolTag.classList.add('active');
+            urlProtocolTag.style.color = '#7c5cff';
+            urlProtocolTag.style.borderColor = '#7c5cff4d';
+            urlProtocolTag.style.background = '#7c5cff1a';
+            urlCard.classList.add('valid');
+            btnUrlEnhance.disabled = false;
+            btnUrlEnhance.innerHTML = '<span class="btn-icon">✨</span> Enhance JSON';
+            urlHint.textContent = 'Ready to enhance ' + obs.length + ' outbound' + (obs.length > 1 ? 's' : '') + ' in the JSON config!';
+            urlHint.style.color = '#4cdf86';
+        }
+
+        function onTabJsonEnhance(val) {
+            const res = enhanceJson(val);
+            if (!res || res.error) {
+                outputSection.style.display = 'none';
+                outputList = [];
+                urlHint.textContent = (res && res.error) || 'Could not enhance the JSON config';
+                urlHint.style.color = '#f05050';
+                return;
+            }
+            const parts = ['✨ Enhanced JSON · ' + res.enhanced + ' outbound' + (res.enhanced > 1 ? 's' : '')];
+            if (res.tls < res.enhanced) parts.push((res.enhanced - res.tls) + ' without TLS (fp only, no fragment)');
+            outputList = [res.json];
+            outputRemark.textContent = parts.join(REMARK_JOINER);
+            outputUrl.textContent = res.json;
+            outputSection.style.display = 'block';
+            lastSource = 'json';
+            if (btnDownloadB64) btnDownloadB64.style.display = 'none';
+            outputSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
         function onTabUrlEnhance() {
             const val = urlInput.value.trim();
+            if (btnDownloadB64) btnDownloadB64.style.display = '';
+            if (enhanceJson && looksLikeJsonConfig(val)) {
+                onTabJsonEnhance(val);
+                return;
+            }
             const lines = extractLines(val);
             if (lines.length === 0) {
                 outputSection.style.display = 'none';
@@ -1449,6 +1546,7 @@
             if (invalid) parts.push('ignored ' + invalid + ' unparseable line(s)');
             outputRemark.textContent = parts.join(REMARK_JOINER);
             outputUrl.textContent = enhanced.join(SUB_JOIN);
+            if (btnDownloadB64) btnDownloadB64.style.display = '';
             outputSection.style.display = 'block';
             lastSource = 'sub';
             if (focus) outputSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1670,6 +1768,10 @@
             });
             if (btnDownload) btnDownload.addEventListener('click', () => {
                 if (!outputList.length) return;
+                if (lastSource === 'json' && exportNames.json) {
+                    downloadText(exportNames.json, outputUrl.textContent + '\n');
+                    return;
+                }
                 downloadText(exportNames.txt, outputUrl.textContent + '\n');
             });
             if (btnDownloadB64) btnDownloadB64.addEventListener('click', () => {
@@ -1739,6 +1841,7 @@
     // scheduler shapes preserved via the controller.
     const fragTab = createEnhanceTab({
         enhanceSingle: enhanceURL,
+        enhanceJson: enhanceFullConfig,
         ids: {
             urlInput: enhancerInput, urlClear: enhancerClear, urlParsed: enhancerParsed,
             urlProtocolTag: enhancerProtocolTag, urlCard: enhancerCard,
@@ -1755,7 +1858,7 @@
         subJoin: '\n',
         remarkJoiner: ' · ',
         corsGuideStep3: 'Paste it into the box above and press Fetch & Enhance.',
-        exportNames: { txt: 'enhanced-configs.txt', b64: 'enhanced-configs-base64.txt' },
+        exportNames: { txt: 'enhanced-configs.txt', b64: 'enhanced-configs-base64.txt', json: 'enhanced-config.json' },
         failureCopy: { noConfigs: 'No recognizable VLESS/Trojan configs in the input. Open the link in a new tab and paste its contents here.' },
         showProtocolTag: true,
         busyGuardOnInput: true,

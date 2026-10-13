@@ -231,6 +231,140 @@ function enhanceEchUrlCore(raw, opts) {
     return { url: u.toString() };
 }
 
+// ===== Full Xray JSON config (Fragment tab) =====
+// v2rayNG "Export full configuration" / custom-type configs are whole Xray
+// JSON documents, not share links. These helpers apply the same fp / cs / fm
+// options the URL path writes as query params, but into the JSON fields the
+// core reads them from: tlsSettings.fingerprint (or realitySettings for
+// REALITY), tlsSettings.cipherSuites and streamSettings.finalmask. Every
+// other key (dns, routing, inbounds, policy, remarks, other outbounds) is
+// passed through untouched.
+const FULL_CONFIG_PROTOCOLS = ['vless', 'vmess', 'trojan'];
+
+function looksLikeJsonConfig(raw) {
+    const s = String(raw || '').trim();
+    return s.startsWith('{') || s.startsWith('[');
+}
+
+function parseFullConfigJson(raw) {
+    let data;
+    try {
+        data = JSON.parse(String(raw || '').trim());
+    } catch (e) {
+        return { error: 'Invalid JSON: ' + e.message };
+    }
+    const isArray = Array.isArray(data);
+    const configs = isArray ? data : [data];
+    if (configs.length === 0) return { error: 'The JSON array is empty' };
+    for (const cfg of configs) {
+        if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg) || !Array.isArray(cfg.outbounds)) {
+            return { error: 'Not an Xray config — expected an object with an "outbounds" array' };
+        }
+    }
+    return { configs, isArray };
+}
+
+function fullConfigOutboundServer(ob) {
+    const s = ob.settings || {};
+    const entry = (Array.isArray(s.vnext) && s.vnext[0])
+        || (Array.isArray(s.servers) && s.servers[0])
+        || s;
+    return { server: entry.address || '', port: entry.port || '' };
+}
+
+function fullConfigProxyOutbounds(cfg) {
+    return cfg.outbounds.filter(ob => ob && typeof ob === 'object'
+        && FULL_CONFIG_PROTOCOLS.includes(String(ob.protocol || '').toLowerCase()));
+}
+
+function summarizeFullConfig(raw) {
+    const parsed = parseFullConfigJson(raw);
+    if (parsed.error) return parsed;
+    const outbounds = [];
+    parsed.configs.forEach((cfg, ci) => {
+        fullConfigProxyOutbounds(cfg).forEach(ob => {
+            const ss = ob.streamSettings || {};
+            const { server, port } = fullConfigOutboundServer(ob);
+            outbounds.push({
+                config: ci,
+                remarks: typeof cfg.remarks === 'string' ? cfg.remarks : '',
+                tag: ob.tag || '',
+                protocol: String(ob.protocol).toLowerCase(),
+                server: String(server),
+                port: String(port),
+                network: ss.network || 'tcp',
+                security: ss.security || 'none'
+            });
+        });
+    });
+    if (outbounds.length === 0) {
+        return { error: 'No VLESS / VMess / Trojan outbound found in the config' };
+    }
+    return { configCount: parsed.configs.length, isArray: parsed.isArray, outbounds };
+}
+
+function enhanceFullConfigCore(raw, opts) {
+    const parsed = parseFullConfigJson(raw);
+    if (parsed.error) return parsed;
+    const o = opts || {};
+    const fp = String(o.fp || '').trim();
+    const cs = String(o.cs || '').trim();
+    const fmRaw = String(o.fm || '').trim();
+    let fm = null;
+    if (fmRaw) {
+        try {
+            fm = JSON.parse(fmRaw);
+        } catch (e) {
+            return { error: 'Final Mask (fm) is not valid JSON: ' + e.message };
+        }
+        if (!fm || typeof fm !== 'object' || Array.isArray(fm)) {
+            return { error: 'Final Mask (fm) must be a JSON object, e.g. {"tcp": [...]}' };
+        }
+    }
+
+    const targets = [];
+    parsed.configs.forEach(cfg => targets.push(...fullConfigProxyOutbounds(cfg)));
+    if (targets.length === 0) {
+        return { error: 'No VLESS / VMess / Trojan outbound found in the config' };
+    }
+    // Server override only when there is exactly one proxy outbound — the
+    // same rule as bulk links: rewriting many servers to one address breaks them.
+    const server = (!o.ignoreServer && targets.length === 1) ? String(o.server || '').trim() : '';
+
+    let tlsCount = 0;
+    targets.forEach(ob => {
+        if (server) {
+            const s = ob.settings || (ob.settings = {});
+            const entry = (Array.isArray(s.vnext) && s.vnext[0])
+                || (Array.isArray(s.servers) && s.servers[0]);
+            if (entry) entry.address = server;
+        }
+        const ss = ob.streamSettings || (ob.streamSettings = {});
+        const security = ss.security || 'none';
+        if (fp && fp !== 'none') {
+            if (security === 'tls') {
+                (ss.tlsSettings || (ss.tlsSettings = {})).fingerprint = fp;
+            } else if (security === 'reality') {
+                (ss.realitySettings || (ss.realitySettings = {})).fingerprint = fp;
+            }
+        }
+        // cs / fm only with TLS — same rule as enhanceUrlCore.
+        if (security === 'tls') {
+            tlsCount++;
+            if (cs) (ss.tlsSettings || (ss.tlsSettings = {})).cipherSuites = cs;
+            if (fm) ss.finalmask = JSON.parse(JSON.stringify(fm));
+        }
+    });
+
+    const out = parsed.isArray ? parsed.configs : parsed.configs[0];
+    return {
+        json: JSON.stringify(out, null, 2),
+        enhanced: targets.length,
+        tls: tlsCount,
+        serverApplied: !!server
+    };
+}
+
 // ===== URL Parser =====
 function extractLines(raw) {
     if (!raw) return [];
@@ -1423,6 +1557,7 @@ if (typeof module !== 'undefined' && module.exports) {
         getEchQueryServer, ECH_DNS_DEFAULT, isBareEchDomain, normalizeEchInput,
         ECH_PRESETS, FRAGMENT_PRESETS, SUB_SCHEME,
         enhanceUrlCore, enhanceEchUrlCore,
+        looksLikeJsonConfig, parseFullConfigJson, summarizeFullConfig, enhanceFullConfigCore,
         parseProxyURLSingle, parseProxyURL, parseVless, parseVmess, parseTrojan, parseShadowsocks, parseSocks, parseHttp,
         buildStreamSettings, buildProxyOutbound, buildChainOutbound, buildSingboxOutbound,
         maskString, truncateStr,
