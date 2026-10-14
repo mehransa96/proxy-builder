@@ -16,7 +16,7 @@ const {
     parseProxyURLSingle, parseProxyURL, parseVless, parseVmess,
     parseTrojan, parseShadowsocks, parseSocks, parseHttp,
     buildStreamSettings, buildProxyOutbound, buildChainOutbound, buildSingboxOutbound,
-    maskString, truncateStr
+    maskString, truncateStr, stripEarlyDataParam
 } = pure;
 
 describe('safeAtob', () => {
@@ -326,6 +326,27 @@ describe('parseVmess', () => {
         const r = parseVmess('vmess://' + Buffer.from(JSON.stringify(cfg), 'utf8').toString('base64'));
         assert.equal(typeof r.remark, 'string');
         assert.equal(r.remark, '12345');
+    });
+
+    it('carries scy through, undefined when absent', () => {
+        const mk = extra => 'vmess://' + Buffer.from(JSON.stringify(Object.assign({ v: '2', ps: 'x', add: 'example.com', port: '443', id: 'uuid-1', aid: '0', net: 'tcp', type: 'none', tls: 'none' }, extra)), 'utf8').toString('base64');
+        assert.equal(parseVmess(mk({ scy: 'aes-128-gcm' })).scy, 'aes-128-gcm');
+        assert.equal(parseVmess(mk({})).scy, undefined);
+    });
+});
+
+describe('stripEarlyDataParam', () => {
+    it('strips ?ed= and &ed=, keeping other params', () => {
+        assert.equal(stripEarlyDataParam('/path?ed=2048'), '/path');
+        assert.equal(stripEarlyDataParam('/path?foo=bar&ed=2048'), '/path?foo=bar');
+        assert.equal(stripEarlyDataParam('/path?ed=2048&foo=bar'), '/path?foo=bar');
+        assert.equal(stripEarlyDataParam('/path?a=1&ed=2048&b=2'), '/path?a=1&b=2');
+    });
+
+    it('leaves paths without ed untouched', () => {
+        assert.equal(stripEarlyDataParam('/path'), '/path');
+        assert.equal(stripEarlyDataParam('/path?speed=1'), '/path?speed=1');
+        assert.equal(stripEarlyDataParam('/path?red=1'), '/path?red=1');
     });
 });
 
@@ -1263,6 +1284,14 @@ describe('buildChainOutbound', () => {
     it('unknown protocol returns null', () => {
         assert.equal(buildChainOutbound({ protocol: 'nope', server: 'x', port: 1 }), null);
     });
+
+    it('vmess honors the link scy (proxy and chain)', () => {
+        const p = { protocol: 'vmess', uuid: 'u1', server: 'm.example.com', port: 443, scy: 'aes-128-gcm' };
+        assert.equal(buildChainOutbound(p).settings.vnext[0].users[0].security, 'aes-128-gcm');
+        assert.equal(buildProxyOutbound(p).settings.vnext[0].users[0].security, 'aes-128-gcm');
+        const noScy = { protocol: 'vmess', uuid: 'u1', server: 'm.example.com', port: 443 };
+        assert.equal(buildChainOutbound(noScy).settings.vnext[0].users[0].security, 'auto');
+    });
 });
 
 describe('buildSingboxOutbound', () => {
@@ -1274,7 +1303,6 @@ describe('buildSingboxOutbound', () => {
             server_port: 443,
             uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
             packet_encoding: '',
-            network: 'tcp',
             tls: {
                 enabled: true,
                 server_name: 'example.com',
@@ -1311,7 +1339,6 @@ describe('buildSingboxOutbound', () => {
             server_port: 443,
             uuid: 'u1',
             packet_encoding: '',
-            network: 'tcp',
             tls: { enabled: true, server_name: 'd.example.com' },
             transport: { type: 'ws', path: '/', headers: {} }
         });
@@ -1326,7 +1353,6 @@ describe('buildSingboxOutbound', () => {
             server_port: 443,
             uuid: 'u1',
             packet_encoding: '',
-            network: 'tcp',
             flow: 'xtls-rprx-vision',
             tls: { enabled: true, server_name: 'f.example.com' }
         });
@@ -1344,7 +1370,6 @@ describe('buildSingboxOutbound', () => {
             server_port: 443,
             uuid: 'u1',
             packet_encoding: '',
-            network: 'tcp',
             tls: {
                 enabled: true,
                 server_name: 'r.example.com',
@@ -1362,7 +1387,6 @@ describe('buildSingboxOutbound', () => {
             server: 't.example.com',
             server_port: 443,
             password: 'pw',
-            network: 'tcp',
             tls: {
                 enabled: true,
                 server_name: 't.example.com',
@@ -1384,8 +1408,7 @@ describe('buildSingboxOutbound', () => {
             server_port: 443,
             uuid: 'uuid-x',
             security: 'auto',
-            alter_id: 0,
-            network: 'tcp'
+            alter_id: 0
         });
     });
 
@@ -1399,8 +1422,7 @@ describe('buildSingboxOutbound', () => {
             server: 'ss.example.com',
             server_port: 8388,
             method: 'aes-256-gcm',
-            password: 'mypass',
-            network: 'tcp'
+            password: 'mypass'
         });
     });
 
@@ -1486,7 +1508,6 @@ describe('buildSingboxOutbound', () => {
             server_port: 443,
             uuid: 'u1',
             packet_encoding: '',
-            network: 'tcp',
             tls: { enabled: true, server_name: 'hu.example.com' },
             transport: { type: 'httpupgrade', host: 'hu.example.com', path: '/up' }
         });
@@ -1504,7 +1525,6 @@ describe('buildSingboxOutbound', () => {
             server_port: 443,
             uuid: 'u1',
             packet_encoding: '',
-            network: 'tcp',
             tls: { enabled: true, server_name: 'w.example.com' },
             transport: {
                 type: 'ws',
@@ -1516,7 +1536,46 @@ describe('buildSingboxOutbound', () => {
         });
     });
 
-    it('unknown protocol returns a bare outbound (no null)', () => {
+        it('ws early-data from &ed= keeps the other query params', () => {
+        const out = buildSingboxOutbound({
+            protocol: 'vless', uuid: 'u1', server: 'w.example.com', port: 443,
+            type: 'ws', host: 'w.example.com', path: '/path?foo=bar&ed=2560',
+            security: 'tls', sni: 'w.example.com'
+        }, 'proxy', null);
+        assert.equal(out.transport.path, '/path?foo=bar');
+        assert.equal(out.transport.max_early_data, 2560);
+    });
+
+    it('httpupgrade strips &ed= too', () => {
+        const out = buildSingboxOutbound({
+            protocol: 'vless', uuid: 'u1', server: 'hu.example.com', port: 443,
+            type: 'httpupgrade', host: 'hu.example.com', path: '/up?x=1&ed=2048'
+        }, 'proxy', null);
+        assert.equal(out.transport.path, '/up?x=1');
+    });
+
+    it('vless/vmess/trojan/ss chain hops leave network unset so UDP passes', () => {
+        const hops = [
+            { protocol: 'vless', uuid: 'u1', server: 'a.example.com', port: 443 },
+            { protocol: 'vmess', uuid: 'u1', server: 'a.example.com', port: 443 },
+            { protocol: 'trojan', password: 'pw', server: 'a.example.com', port: 443 },
+            { protocol: 'shadowsocks', method: 'aes-256-gcm', password: 'pw', server: 'a.example.com', port: 8388 }
+        ];
+        for (const hop of hops) {
+            for (const out of [buildSingboxOutbound(hop, 'proxy', null), buildSingboxOutbound(hop, 'chain', 'proxy')]) {
+                assert.ok(!('network' in out), hop.protocol + ' must not restrict network');
+            }
+        }
+    });
+
+    it('vmess honors the link scy', () => {
+        const out = buildSingboxOutbound({
+            protocol: 'vmess', uuid: 'u1', server: 'm.example.com', port: 443, scy: 'chacha20-poly1305'
+        }, 'proxy', null);
+        assert.equal(out.security, 'chacha20-poly1305');
+    });
+
+it('unknown protocol returns a bare outbound (no null)', () => {
         assert.deepEqual(buildSingboxOutbound({
             protocol: 'wireguard', server: 'x.example.com', port: 51820
         }, 'proxy', null), {

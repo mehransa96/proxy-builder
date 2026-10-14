@@ -188,6 +188,9 @@
   <li>هسته <b>Xray</b> از کانفیگ‌های <b>raw</b> (بدون هدر TCP&rlm;) پشتیبانی نمی‌کند؛ به‌جای آن باید از TCP&rlm; با هدر http&rlm; استفاده کرد.</li>
   <li>کانفیگ‌های <b>Shadowsocks</b> نمی‌توانند هیچ نوع transport&rlm; (مانند WebSocket&rlm;، gRPC&rlm;، HTTPUpgrade&rlm; و غیره) داشته باشند و فاقد قابلیت TLS&rlm; هستند.</li>
   <li>پروتکل <b>SSH</b> تنها توسط <b>Sing-box</b> پشتیبانی می‌شود. زمانی که از SSH&rlm; استفاده می‌کنید، تب مربوط به Xray&rlm; به‌صورت خودکار غیرفعال خواهد شد. برای استفاده از آن، لطفاً کلاینت <a href="https://sing-box.sagernet.org/">sing-box&rlm;</a> را به کار ببرید.</li>
+  <li><b>زنجیره‌های Sing-box&rlm; ترافیک UDP&rlm; را عبور می‌دهند</b> (بازی، تماس صوتی، QUIC&rlm;) وقتی هاپ‌ها VLESS&rlm;، VMess&rlm;، Trojan&rlm; یا Shadowsocks&rlm; باشند؛ هاپ‌های SOCKS&rlm; همچنان فقط TCP&rlm; هستند.</li>
+  <li>لینک‌های <b>VMess</b> رمزنگاری خودشان (<code>scy</code>) را حفظ می‌کنند؛ مقدار <code>auto</code> فقط وقتی استفاده می‌شود که لینک آن را نداشته باشد.</li>
+  <li>در مسیرهای WebSocket&rlm; و HTTPUpgrade&rlm; پارامتر early-data&rlm; یعنی <code>ed</code> حذف می‌شود، چه به شکل <code>?ed=</code> نوشته شده باشد چه <code>&amp;ed=</code>؛ بقیه پارامترها حفظ می‌شوند.</li>
 </ul>
 
 ## 🔧 انتقال‌های (Transports) پشتیبانی‌شده
