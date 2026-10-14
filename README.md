@@ -2,14 +2,15 @@
 
 🌐 **[فارسی](README-fa.md)** | [English](README.md)
 
-A powerful, standalone web application with six tools:
+A powerful, standalone web application with seven tools:
 
 1. **🛠️ VPN Fixer v8** (default tab) — the upgraded standalone VPN Config Fixer: one config whose balancer tries several routes at once (TLS fragment / no fragment, clean CDN IPs, several fingerprints) and keeps the one that works on the current network, with the original route as fallback.
-2. **🧪 Templates** — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
-3. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
-4. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
-5. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
-6. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
+2. **🔐 Shadowsocks** — rebuild a Shadowsocks config (JSON or `ss://` links) in the layout of configs that connect on every Iranian network: plain AEAD Shadowsocks to a relay server inside Iran, its domain pinned in `dns.hosts`; several relays become one balancer.
+3. **🧪 Templates** — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
+4. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
+5. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
+6. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
+7. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
 
 All processing happens in your browser. No data is sent to any server — fetching a subscription link contacts only the provider URL you entered, and pasted or dropped content never leaves your browser.
 
@@ -21,6 +22,10 @@ All processing happens in your browser. No data is sent to any server — fetchi
 - **Multi-path (recommended)**: one balancer member per clean IP / address, each with and without the fragment and with chrome / edge / firefox / safari fingerprints. SNI and Host stay on your domain. `leastLoad` + `burstObservatory` pick the healthy routes every minute; the original unfragmented route is the fallback, so the same config keeps working where it already did.
 - **DNS without loops**: Iranian domains and the server domain are resolved by Shecan / Begzar routed direct; other DNS (1.1.1.1, 8.8.8.8) goes through the tunnel. Replaces resolvers such as 223.5.5.5 from the input.
 - **Test pack**: one single-route config per balancer member (plus the fallback) with distinct names, to see which route connects on each operator.
+
+### 🔐 Shadowsocks
+- **Analyse**: paste a Shadowsocks JSON config (or an array) or `ss://` links. The tab checks the method (AEAD vs legacy / none), password, transport, mux, whether the relay domain is pinned in `dns.hosts`, and explains why Shadowsocks only gets through when the server is a relay inside Iran.
+- **Build**: the exact layout of the working configs — `chacha20-ietf-poly1305` over plain TCP, `UseIP` + happy-eyeballs, the relay domain pinned (a **Look up** button resolves it over DNS-over-HTTPS), domestic DNS for private / .ir names routed direct, Iranian traffic direct, UDP 443 blocked. Several servers become a `leastLoad` balancer. Also outputs SIP002 `ss://` links.
 
 ### 🧪 Templates
 - **Analyse**: paste your full JSON config (or a link) and the tab lists what it does — transport, SNI, fingerprint, REALITY, domain fronting, finalmask, DNS pins, domestic DNS, balancers.
@@ -91,6 +96,11 @@ For full clipboard support, serve this folder locally — e.g. `python3 -m http.
 2. Paste your full JSON config (or a link), or pick a file.
 3. Add a few clean IPs if your server is behind a CDN (the most useful option for MCI), keep **multi-path** and the **known-good fragment**, and press **اصلاح کانفیگ**.
 4. Copy the result and in v2rayNG use **+ → Import config from clipboard**. If it still fails, download the **test pack** and test each route on its own.
+
+### 🔐 Shadowsocks
+1. Switch to the **Shadowsocks** tab and paste your config or `ss://` link(s).
+2. Read the analysis; press **Look up** if a relay domain is not pinned.
+3. Press **Build Shadowsocks Config**, then copy the JSON (v2rayNG: **+ → Import config from clipboard**) or the `ss://` link.
 
 ### 🧪 Templates
 1. Open the app and switch to the **Templates** tab.
