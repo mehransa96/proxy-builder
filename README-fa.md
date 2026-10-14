@@ -224,7 +224,9 @@
 
 ## 🔧 انتقال‌های (Transports) پشتیبانی‌شده
 
-TCP، TCP (http header)، WebSocket، gRPC، HTTPUpgrade
+TCP، TCP (http header)، WebSocket، gRPC، HTTPUpgrade، XHTTP&rlm; (لینک‌های <code>splithttp</code>&rlm; هم پذیرفته می‌شوند)
+
+در خروجی Xray&rlm;، مقادیر <code>host</code>&rlm;، <code>path</code>&rlm;، <code>mode</code>&rlm; و <code>extra</code>&rlm; لینک XHTTP&rlm; حفظ می‌شوند. خروجی Sing-box&rlm; از transport&rlm; با نوع <code>xhttp</code>&rlm; استفاده می‌کند که فقط نسخه‌هایی از Sing-box&rlm; که XHTTP&rlm; را اضافه کرده‌اند آن را می‌شناسند؛ نسخه‌ی اصلی Sing-box&rlm; به‌جای اتصال بی‌صدا از طریق TCP&rlm; ساده، آن را رد می‌کند.
 
 ## 🔒 پروتکل‌های رمزنگاری (TLS) پشتیبانی‌شده
 
