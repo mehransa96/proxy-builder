@@ -1312,3 +1312,34 @@ body {
 #view-templates .sub-tab { white-space: normal; }
 .main-tabs { flex-wrap: wrap; }
 @media (max-width: 700px) { .main-tab { flex: 1 1 30%; padding: 10px 8px; font-size: 0.8rem; } }
+
+/* ===== VPN Config Fixer v8 ===== */
+#view-vcf { text-align: right; }
+#view-vcf pre, #view-vcf [dir="ltr"] { text-align: left; }
+#view-vcf .card-hint, #view-vcf label, #view-vcf .info-content { line-height: 1.8; }
+#view-vcf .settings-title, #view-vcf h2, #view-vcf h3 { text-align: right; }
+#view-vcf select, #view-vcf .setting-textarea { width: 100%; }
+.vcf-ver { font-size: 0.7em; color: #34d399; border: 1px solid #34d399; border-radius: 999px; padding: 0 8px; margin-inline-start: 6px; }
+.vcf-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.vcf-toolbar label.btn-subtle { cursor: pointer; }
+.vcf-filename { font-size: 0.8rem; opacity: 0.7; direction: ltr; }
+.vcf-more { margin-top: 12px; }
+.vcf-more summary { cursor: pointer; opacity: 0.85; margin-bottom: 10px; }
+.vcf-scores { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.vcf-score { text-align: center; padding: 10px 4px; border-radius: 10px; background: rgba(255,255,255,0.04); border-top: 2px solid #64748b; }
+.vcf-score[data-kind="fix"] { border-top-color: #34d399; }
+.vcf-score[data-kind="ok"] { border-top-color: #60a5fa; }
+.vcf-score[data-kind="warn"] { border-top-color: #fbbf24; }
+.vcf-score .num { display: block; font-size: 1.5rem; font-weight: 700; }
+.vcf-score .cap { font-size: 0.75rem; opacity: 0.75; }
+.vcf-log { max-height: 22rem; overflow-y: auto; margin-bottom: 14px; border-radius: 10px; background: rgba(0,0,0,0.2); padding: 6px; }
+.vcf-entry { display: flex; gap: 10px; padding: 8px; border-radius: 8px; margin-bottom: 2px; }
+.vcf-entry[data-kind="fix"] { background: rgba(52,211,153,0.06); }
+.vcf-entry[data-kind="warn"] { background: rgba(251,191,36,0.07); }
+.vcf-entry .mark { flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: rgba(255,255,255,0.06); }
+.vcf-entry[data-kind="fix"] .mark { color: #34d399; }
+.vcf-entry[data-kind="warn"] .mark { color: #fbbf24; }
+.vcf-entry .headline { font-size: 0.9rem; }
+.vcf-entry .why { font-size: 0.8rem; opacity: 0.7; margin-top: 2px; }
+.vcf-history-item { display: block; width: 100%; text-align: right; margin-bottom: 6px; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03); color: inherit; cursor: pointer; font: inherit; }
+.vcf-history-item:hover { border-color: #34d399; }

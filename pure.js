@@ -2225,6 +2225,352 @@ function describeConfigTechniques(raw) {
     return { items: out };
 }
 
+// ===== VPN Config Fixer v8 (the user's own fixer, upgraded) =====
+// Port of the standalone "VPN Config Fixer v7" page. v7 stripped every
+// finalmask fragment and resolved the server through whatever DNS the panel
+// export carried; v8 keeps the same fix pipeline but builds one config whose
+// balancer members try the routes a filtered network still lets through:
+// TLS ClientHello fragmentation, clean CDN IPs (SNI + Host stay on the
+// domain) and several fingerprints, health-checked by burstObservatory, with
+// the original unfragmented route as fallback. Log entries are plain text.
+const VCF_FRAGMENT = { packets: '1-3', length: '50-100', delay: '10-20', maxSplit: '10' };
+const VCF_FP_POOL = ['chrome', 'edge', 'firefox', 'safari'];
+const VCF_IR_DOMAINS = ['domain:ir', 'domain:xn--mgba3a4f16a', 'geosite:category-ir'];
+const VCF_PING = {
+    destination: 'http://www.gstatic.com/generate_204', interval: '1m', sampling: 2,
+    timeout: '8s', httpMethod: 'GET', connectivity: 'https://snapp.ir'
+};
+const VCF_DEFAULTS = {
+    mode: 'multipath', fragment: 'add', template: false, alpnMode: 'keep', policy: 'safe',
+    dropQuic: false, dnsProfile: true, servers: '', cleanIps: '', snis: '', remarks: ''
+};
+
+// Splits a textarea into unique entries (newline / comma / space separated).
+function vcfList(text) {
+    return String(text || '').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i);
+}
+
+// "panel.example.com = cdn1.example.com, cdn2.example.com" per line →
+// [{ origin, edges: [...] }]. Lines without "=" are extra CDN domains whose
+// stale dns.hosts pins should be dropped.
+function vcfParseServers(text) {
+    const out = [];
+    String(text || '').split(/\r?\n/).forEach(line => {
+        const l = line.replace(/#.*/, '').trim();
+        if (!l) return;
+        const eq = l.indexOf('=');
+        const origin = (eq < 0 ? l : l.slice(0, eq)).trim().toLowerCase();
+        const edges = eq < 0 ? [] : vcfList(l.slice(eq + 1)).map(e => e.toLowerCase());
+        if (origin) out.push({ origin, edges });
+    });
+    return out;
+}
+
+function vcfHostIs(host, domain) {
+    const h = String(host || '').toLowerCase();
+    const d = String(domain || '').toLowerCase();
+    return !!d && (h === d || h.endsWith('.' + d));
+}
+
+function vcfNode(ob) {
+    const s = ob && ob.settings;
+    if (s && Array.isArray(s.vnext) && s.vnext[0]) return s.vnext[0];
+    if (s && Array.isArray(s.servers) && s.servers[0]) return s.servers[0];
+    return null;
+}
+
+function vcfApplyAlpn(tls, mode, k) {
+    if (mode === 'h2only') tls.alpn = ['h2'];
+    else if (mode === 'h2') tls.alpn = ['h2', 'http/1.1'];
+    else if (mode === 'h1') tls.alpn = ['http/1.1'];
+    else if (mode === 'mixed') tls.alpn = k % 2 === 0 ? ['http/1.1'] : ['h2', 'http/1.1'];
+}
+
+// opts: see VCF_DEFAULTS. mode 'multipath' (balancer, recommended) | 'single';
+// fragment 'add' (known-good finalmask) | 'keep' (the input's own) | 'strip'.
+// Returns { config, json, log: [{kind:'fix'|'ok'|'warn', headline, why}], members }.
+function vcfFix(raw, opts) {
+    const o = Object.assign({}, VCF_DEFAULTS, opts || {});
+    let text = String(raw || '').trim();
+    if (!text) return { error: 'کادر ورودی خالی است' };
+    if (!looksLikeJsonConfig(text)) {
+        const conv = linkToFullConfig(text.split(/\r?\n/)[0]);
+        if (conv.error) return conv;
+        text = conv.json;
+    }
+    const parsed = parseFullConfigJson(text);
+    if (parsed.error) return parsed;
+    const c = cloneJson(parsed.configs[0]);
+    const log = [];
+    const note = (kind, headline, why) => log.push({ kind, headline, why: why || '' });
+    const base = fullConfigProxyOutbounds(c)[0];
+    if (!base) return { error: 'No VLESS / VMess / Trojan outbound found' };
+    const node = vcfNode(base);
+    if (!node || !node.address) return { error: 'The proxy outbound has no server address' };
+    base.streamSettings = base.streamSettings || {};
+    const ss = base.streamSettings;
+    const servers = vcfParseServers(o.servers);
+
+    // 1. Panel domain → connection (CDN) domain.
+    const addr = String(node.address);
+    const srv = servers.find(s => vcfHostIs(addr, s.origin) && s.edges.length);
+    if (srv) {
+        const edge = srv.edges[0];
+        node.address = edge;
+        note('fix', 'آدرس ' + addr + ' با دامنه اتصال ' + edge + ' جایگزین شد', 'دامنه پنل (DNS Only) نباید در کانفیگ کاربر بماند');
+        const tls = ss.tlsSettings;
+        if (ss.security === 'tls' && tls && (!tls.serverName || tls.serverName === addr)) tls.serverName = edge;
+        const ws = ss.wsSettings;
+        if (ws && (ws.host === addr || (ws.headers && ws.headers.Host === addr))) {
+            ws.host = edge;
+            if (ws.headers) delete ws.headers.Host;
+        }
+    } else if (servers.some(s => vcfHostIs(addr, s.origin))) {
+        note('warn', 'آدرس یک دامنه پنل است اما دامنه اتصالی برایش ثبت نشده', 'در فهرست سرورها جلوی آن = دامنه اتصال بنویسید');
+    } else {
+        note('ok', 'آدرس سرور: ' + addr);
+    }
+    const host = String(node.address);
+
+    // 2. dns.hosts: stale CDN pins for the server / user domains, IPv6.
+    if (c.dns && c.dns.hosts && typeof c.dns.hosts === 'object') {
+        const h = c.dns.hosts;
+        const mine = [host].concat(...servers.map(s => [s.origin].concat(s.edges)));
+        let cut = 0, v6 = 0;
+        Object.keys(h).forEach(k => {
+            if (!isIpAddress(host) && mine.some(d => vcfHostIs(k, d))) { delete h[k]; cut++; return; }
+            const list = [].concat(h[k]);
+            const kept = list.filter(ip => !String(ip).includes(':'));
+            v6 += list.length - kept.length;
+            if (!kept.length) delete h[k];
+            else if (kept.length !== list.length) h[k] = kept.length === 1 ? kept[0] : kept;
+        });
+        if (cut) note('fix', 'آی‌پی ثابت ' + cut + ' دامنه‌ی شخصی از dns.hosts حذف شد', 'آی‌پی‌های CDN عوض می‌شوند و مقدار ثابت باعث قطعی می‌شود');
+        if (v6) note('fix', v6 + ' آدرس IPv6 از dns.hosts حذف شد', 'شبکه‌های ایران IPv6 را درست عبور نمی‌دهند');
+    }
+
+    // 3. Stream settings.
+    if (ss.sockopt && ss.sockopt.happyEyeballs) {
+        delete ss.sockopt.happyEyeballs;
+        note('fix', 'Happy Eyeballs حذف شد', 'تلاش برای IPv6 روی شبکه‌ی همراه اول باعث تأخیر می‌شود');
+    }
+    ss.sockopt = ss.sockopt || {};
+    if (!isIpAddress(host) && ss.sockopt.domainStrategy !== 'UseIPv4') {
+        note('fix', 'domainStrategy از ' + (ss.sockopt.domainStrategy || 'تعریف‌نشده') + ' به UseIPv4', 'فقط IPv4؛ دامنه‌ی سرور با DNS داخلیِ مستقیم حل می‌شود');
+        ss.sockopt.domainStrategy = 'UseIPv4';
+    }
+    const port = Number(node.port) || 443;
+    if (!ss.security) {
+        ss.security = [80, 8080, 8880, 2052, 2082, 2086, 2095].includes(port) ? 'none' : 'tls';
+        note('fix', 'security = ' + ss.security, 'بر اساس پورت ' + port);
+    }
+    const isTls = ss.security === 'tls';
+    const ws = ss.network === 'ws' ? (ss.wsSettings = ss.wsSettings || {}) : null;
+    if (isTls) {
+        const tls = ss.tlsSettings = ss.tlsSettings || {};
+        if (!tls.serverName) {
+            const sn = (ws && (ws.host || (ws.headers && ws.headers.Host))) || (isIpAddress(host) ? '' : host);
+            if (sn) { tls.serverName = sn; note('fix', 'serverName (SNI) = ' + sn, 'بدون SNI دست‌دهی TLS روی CDN برقرار نمی‌شود'); }
+            else note('warn', 'serverName خالی است', 'دامنه‌ی سرور را دستی وارد کنید');
+        }
+        if (tls.fingerprint === 'unsafe' || !tls.fingerprint) {
+            note('fix', 'fingerprint از ' + (tls.fingerprint || 'خالی') + ' به chrome', 'ClientHello باید شبیه مرورگر باشد');
+            tls.fingerprint = 'chrome';
+        }
+        if (tls.allowInsecure === undefined) tls.allowInsecure = false;
+    }
+    if (ws) {
+        if (ws.headers && ws.headers.Host) {
+            if (!ws.host) ws.host = ws.headers.Host;
+            delete ws.headers.Host;
+            if (!Object.keys(ws.headers).length) delete ws.headers;
+            note('fix', 'headers.Host به host منتقل شد', 'فرمت جدید Xray برای WebSocket');
+        } else if (!ws.host && isTls && ss.tlsSettings.serverName) {
+            ws.host = ss.tlsSettings.serverName;
+            note('fix', 'host = ' + ws.host, 'CDN بر اساس Host مسیریابی می‌کند');
+        }
+        if (!ws.path) { ws.path = '/'; note('fix', 'path = /'); }
+    }
+    if (ss.network === 'grpc' && ss.grpcSettings) {
+        if (!ss.grpcSettings.serviceName) note('warn', 'serviceName در gRPC خالی است', 'باید با مقدار سمت سرور یکی باشد');
+        if (isTls && ss.tlsSettings.serverName && !ss.grpcSettings.authority) ss.grpcSettings.authority = ss.tlsSettings.serverName;
+    }
+
+    // Fragment source: the input's own finalmask (keep) or the known-good one.
+    const ownMask = ss.finalmask ? cloneJson(ss.finalmask) : null;
+    delete ss.finalmask;
+    let mask = null;
+    if (ss.security !== 'none' && o.fragment !== 'strip') {
+        mask = (o.fragment === 'keep' && ownMask) ? ownMask : { tcp: [{ type: 'fragment', settings: Object.assign({}, VCF_FRAGMENT) }] };
+    }
+    if (ss.security === 'none' && o.fragment !== 'strip') note('warn', 'بدون TLS، فرگمنت بی‌اثر است', 'فرگمنت فقط SNI داخل ClientHello را پنهان می‌کند');
+
+    // 4. policy / freedom / sniffing.
+    c.policy = c.policy || {};
+    c.policy.levels = c.policy.levels || {};
+    if (o.policy === 'sample') {
+        c.policy.levels['8'] = { connIdle: 300, handshake: 3, uplinkOnly: 2, downlinkOnly: 4 };
+        note('fix', 'policy سطح ۸ مطابق نمونه‌های موفق: 3 / 2 / 4');
+    } else {
+        const lv = c.policy.levels['8'] = c.policy.levels['8'] || {};
+        const done = [];
+        if (!(lv.handshake >= 8)) { lv.handshake = 8; done.push('handshake=8'); }
+        if (!(lv.uplinkOnly >= 4)) { lv.uplinkOnly = 4; done.push('uplinkOnly=4'); }
+        if (!(lv.downlinkOnly >= 4)) { lv.downlinkOnly = 4; done.push('downlinkOnly=4'); }
+        if (!(lv.connIdle >= 60 && lv.connIdle <= 300)) { lv.connIdle = 300; done.push('connIdle=300'); }
+        if (done.length) note('fix', 'زمان‌بندی policy: ' + done.join(' '), 'مقادیر پایین روی شبکه‌ی کند قطعی می‌دهد');
+    }
+    let freedomFix = false;
+    c.outbounds.forEach(ob => {
+        if (!ob || ob.protocol !== 'freedom') return;
+        if (ob.streamSettings) { delete ob.streamSettings; freedomFix = true; }
+        ob.settings = ob.settings || {};
+        if (ob.settings.domainStrategy !== 'UseIPv4') { ob.settings.domainStrategy = 'UseIPv4'; freedomFix = true; }
+    });
+    if (freedomFix) note('fix', 'خروجی freedom اصلاح شد', 'حذف streamSettings و UseIPv4');
+    (c.inbounds || []).forEach(ib => {
+        if (!ib || !ib.sniffing || !Array.isArray(ib.sniffing.destOverride)) return;
+        const before = ib.sniffing.destOverride.length;
+        ib.sniffing.destOverride = ib.sniffing.destOverride.filter(d => d !== 'fakedns' && !(o.dropQuic && d === 'quic'));
+        if (ib.sniffing.destOverride.length < before) note('fix', 'fakedns' + (o.dropQuic ? ' / quic' : '') + ' از sniffing حذف شد');
+    });
+
+    // 5. Members.
+    const origTag = base.tag || 'proxy';
+    const addrs = [host].concat(vcfList(o.cleanIps)).filter((v, i, a) => a.indexOf(v) === i);
+    const sniPool = isTls && ss.tlsSettings.serverName ? [ss.tlsSettings.serverName].concat(vcfList(o.snis)).filter((v, i, a) => a.indexOf(v) === i) : [];
+    const members = [];
+    if (o.mode === 'multipath') {
+        const n = Math.min(8, Math.max(mask ? 4 : 2, addrs.length * (mask ? 2 : 1)));
+        for (let k = 0; k < n; k++) {
+            const step = mask ? 2 : 1;
+            const ob = cloneJson(base);
+            ob.tag = 'lb-' + k;
+            const a = addrs[Math.floor(k / step) % addrs.length];
+            vcfNode(ob).address = a;
+            const s2 = ob.streamSettings;
+            const parts = [a];
+            const frag = !!mask && k % 2 === 0;
+            if (frag) { s2.finalmask = cloneJson(mask); parts.push('fragment'); }
+            if (s2.security === 'tls') {
+                const t = s2.tlsSettings;
+                t.fingerprint = VCF_FP_POOL[Math.floor(k / (step * addrs.length)) % VCF_FP_POOL.length];
+                parts.push(t.fingerprint);
+                if (sniPool.length > 1) { t.serverName = sniPool[k % sniPool.length]; parts.push('sni ' + t.serverName); }
+                if (ws) { vcfApplyAlpn(t, o.alpnMode, k); if (o.alpnMode !== 'keep') parts.push((t.alpn || []).join('+')); }
+            }
+            if (isIpAddress(a)) delete s2.sockopt.domainStrategy;
+            members.push({ tag: ob.tag, address: a, fragment: frag, desc: parts.join(' · '), ob });
+        }
+        base.tag = 'fallback';
+        if (ownMask && o.fragment === 'keep') base.streamSettings.finalmask = ownMask;
+        c.outbounds = members.map(m => m.ob).concat(c.outbounds);
+        c.routing = c.routing || {};
+        c.routing.domainStrategy = c.routing.domainStrategy || 'IPIfNonMatch';
+        c.routing.rules = Array.isArray(c.routing.rules) ? c.routing.rules : [];
+        let conv = 0;
+        c.routing.rules.forEach(r => { if (r && r.outboundTag === origTag) { delete r.outboundTag; r.balancerTag = 'auto'; conv++; } });
+        const hasCatch = c.routing.rules.some(r => r && r.balancerTag === 'auto' && (r.port === '0-65535' || (!r.domain && !r.ip && !r.inboundTag && !r.network && !r.port)));
+        if (!hasCatch) c.routing.rules.push({ type: 'field', port: '0-65535', balancerTag: 'auto' });
+        c.routing.balancers = [{ tag: 'auto', selector: ['lb-'], strategy: { type: 'leastLoad', settings: { expected: Math.min(2, n) } }, fallbackTag: 'fallback' }];
+        c.burstObservatory = { subjectSelector: ['lb-'], pingConfig: Object.assign({}, VCF_PING) };
+        note('fix', n + ' مسیر موازی + انتخاب خودکار (leastLoad)', 'هر دقیقه همه‌ی مسیرها سنجیده می‌شوند و سالم‌ترین‌ها استفاده می‌شوند؛ مسیر اصلیِ بدون فرگمنت (همان که روی ایرانسل کار می‌کند) fallback است');
+        members.forEach(m => note('ok', m.tag + ' ← ' + m.desc));
+        if (conv) note('fix', conv + ' قانون routing از ' + origTag + ' به balancer منتقل شد');
+        if (addrs.length === 1) note('warn', 'آی‌پی تمیز وارد نکرده‌اید', 'مسیرها فقط در فرگمنت و اثرانگشت فرق دارند. اگر سرور پشت Cloudflare است، چند آی‌پی تمیز اضافه کنید — مهم‌ترین راه برای همراه اول');
+    } else {
+        if (mask) ss.finalmask = mask;
+        const extra = vcfList(o.cleanIps)[0];
+        if (extra) {
+            node.address = extra;
+            delete ss.sockopt.domainStrategy;
+            note('fix', 'آدرس = آی‌پی تمیز ' + extra, 'SNI و Host همان دامنه می‌مانند');
+        }
+    }
+    if (mask) note('fix', 'فرگمنت ' + (o.fragment === 'keep' && ownMask ? 'خودِ کانفیگ' : '1-3 · 50-100 · 10-20 · maxSplit 10') + ' نگه داشته/اضافه شد', 'نسخه‌ی قبلی ابزار finalmask را حذف می‌کرد؛ کانفیگ‌های سالم همراه اول آن را دارند (نیاز به Xray-core 26+)');
+    else if (ownMask) note('fix', 'finalmask حذف شد', 'طبق انتخاب شما');
+
+    // 6. DNS: domestic resolvers for Iranian domains and the server domains,
+    // routed direct, so resolving the server never goes through the proxy.
+    if (o.dnsProfile) {
+        c.dns = c.dns || {};
+        c.dns.tag = c.dns.tag || 'dns';
+        c.dns.queryStrategy = 'UseIPv4';
+        const serverDomains = c.outbounds.map(ob => fullConfigProxyOutbounds({ outbounds: [ob] }).length ? vcfNode(ob) : null)
+            .filter(nd => nd && nd.address && !isIpAddress(nd.address)).map(nd => 'full:' + nd.address)
+            .filter((v, i, a) => a.indexOf(v) === i);
+        const globals = (Array.isArray(c.dns.servers) ? c.dns.servers : []).filter(x => typeof x === 'string' && !FIXER_DOMESTIC_DNS.includes(x));
+        if (!globals.includes('1.1.1.1')) globals.unshift('1.1.1.1');
+        if (!globals.includes('8.8.8.8')) globals.push('8.8.8.8');
+        const dropped = (Array.isArray(c.dns.servers) ? c.dns.servers : [])
+            .filter(x => x && typeof x === 'object' && !FIXER_DOMESTIC_DNS.includes(String(x.address)))
+            .map(x => String(x.address)).filter((v, i, a) => a.indexOf(v) === i);
+        c.dns.servers = [
+            { address: FIXER_DOMESTIC_DNS[0], domains: VCF_IR_DOMAINS.slice(), expectIPs: ['geoip:ir'], skipFallback: true, tag: 'domestic-dns' },
+            { address: FIXER_DOMESTIC_DNS[1], domains: VCF_IR_DOMAINS.slice(), skipFallback: true, tag: 'domestic-dns-2' }
+        ];
+        // The server domain resolves abroad, so no expectIPs here.
+        if (serverDomains.length) c.dns.servers.push({ address: FIXER_DOMESTIC_DNS[0], domains: serverDomains, skipFallback: true, tag: 'domestic-dns-srv' });
+        c.dns.servers = c.dns.servers.concat(globals);
+        c.routing = c.routing || {};
+        c.routing.rules = Array.isArray(c.routing.rules) ? c.routing.rules : [];
+        const dnsTags = c.dns.servers.filter(s => s && s.tag).map(s => s.tag);
+        const oldRule = c.routing.rules.find(r => r && Array.isArray(r.inboundTag) && r.inboundTag.some(t => /^domestic-dns/.test(t)));
+        let directTag = (c.outbounds.find(ob => ob && ob.protocol === 'freedom') || {}).tag;
+        if (!directTag) { c.outbounds.push({ protocol: 'freedom', settings: { domainStrategy: 'UseIPv4' }, tag: 'direct' }); directTag = 'direct'; }
+        if (oldRule) c.routing.rules.splice(c.routing.rules.indexOf(oldRule), 1);
+        c.routing.rules.unshift({ type: 'field', inboundTag: dnsTags, outboundTag: directTag });
+        note('fix', 'DNS: دامنه‌های ایرانی و دامنه‌ی سرور با Shecan / Begzar (مستقیم)، بقیه با 1.1.1.1 و 8.8.8.8 از داخل تونل',
+            (dropped.length ? 'DNSهای قبلی (' + dropped.join('، ') + ') کنار گذاشته شدند؛ ' : '') + 'دامنه‌ی سرور دیگر از مسیر خود پروکسی حل نمی‌شود');
+    }
+
+    // 7. Optional: routing rebuilt like the known-good samples (multipath only).
+    if (o.template && o.mode === 'multipath') {
+        const dnsTags = (c.dns && Array.isArray(c.dns.servers) ? c.dns.servers : []).filter(s => s && s.tag).map(s => s.tag);
+        const directTag = (c.outbounds.find(ob => ob && ob.protocol === 'freedom') || {}).tag || 'direct';
+        if (!c.outbounds.some(ob => ob && ob.protocol === 'blackhole')) c.outbounds.push({ protocol: 'blackhole', tag: 'block' });
+        const blockTag = c.outbounds.find(ob => ob && ob.protocol === 'blackhole').tag || 'block';
+        c.routing.rules = [
+            { type: 'field', inboundTag: dnsTags, outboundTag: directTag },
+            { type: 'field', inboundTag: [c.dns ? c.dns.tag : 'dns'], balancerTag: 'auto' },
+            { type: 'field', network: 'udp', port: '443', outboundTag: blockTag },
+            { type: 'field', ip: ['geoip:private'], outboundTag: directTag },
+            { type: 'field', domain: ['geosite:private'], outboundTag: directTag },
+            { type: 'field', ip: ['geoip:ir'], outboundTag: directTag },
+            { type: 'field', domain: VCF_IR_DOMAINS.slice(), outboundTag: directTag },
+            { type: 'field', port: '0-65535', balancerTag: 'auto' }
+        ];
+        note('fix', 'routing مطابق قالب نمونه‌های موفق بازسازی شد', 'ترافیک ایران مستقیم، UDP 443 مسدود، بقیه از balancer');
+    }
+
+    if (o.remarks) c.remarks = String(o.remarks);
+    else c.remarks = (c.remarks || 'config') + (o.mode === 'multipath' ? ' · MCI-fix' : ' · fixed');
+    return { config: c, json: JSON.stringify(c, null, 2), log, members: members.map(m => ({ tag: m.tag, address: m.address, fragment: m.fragment, desc: m.desc })) };
+}
+
+// One single-route config per balancer member (plus the fallback), for
+// testing routes one by one in v2rayNG. Returns a JSON array string.
+function vcfMemberPack(result) {
+    const c = result && result.config;
+    if (!c || !c.routing || !Array.isArray(c.routing.balancers)) return { error: 'Build a multi-path config first' };
+    const tags = (result.members || []).map(m => m.tag).concat(['fallback']);
+    const rest = c.outbounds.filter(ob => ob && !/^lb-\d+$/.test(ob.tag || '') && ob.tag !== 'fallback');
+    const pack = tags.map((tag, i) => {
+        const one = cloneJson(c);
+        const ob = cloneJson(c.outbounds.find(x => x && x.tag === tag));
+        ob.tag = 'proxy';
+        one.outbounds = [ob].concat(cloneJson(rest));
+        one.routing.rules.forEach(r => { if (r && r.balancerTag === 'auto') { delete r.balancerTag; r.outboundTag = 'proxy'; } });
+        delete one.routing.balancers;
+        delete one.burstObservatory;
+        const m = (result.members || [])[i];
+        one.remarks = (c.remarks || 'config') + ' #' + (i + 1) + ' ' + (m ? m.desc : 'fallback');
+        return one;
+    });
+    return { json: JSON.stringify(pack, null, 2), count: pack.length };
+}
+
 // Node test harness: browsers ignore this block (`module` is undefined there).
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -2236,6 +2582,7 @@ if (typeof module !== 'undefined' && module.exports) {
         FIXER_FRAGMENT_PRESETS, FIXER_FINGERPRINTS, FIXER_FRAGMENT_TAG, isIpAddress, dnsDomainsMatch,
         diagnoseFullConfig, fixFullConfigCore, buildFixTestPack, linkToFullConfig,
         FIXER_DOMESTIC_DNS, TEMPLATE_A_FRAGMENT, buildTemplateA, buildTemplateB, describeConfigTechniques,
+        VCF_FRAGMENT, VCF_DEFAULTS, vcfList, vcfParseServers, vcfFix, vcfMemberPack,
         parseProxyURLSingle, parseProxyURL, parseVless, parseVmess, parseTrojan, parseShadowsocks, parseSocks, parseHttp,
         buildStreamSettings, buildProxyOutbound, buildChainOutbound, buildSingboxOutbound,
         maskString, truncateStr,

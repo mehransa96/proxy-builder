@@ -38,7 +38,8 @@
 
         <!-- Main Tabs -->
         <nav class="main-tabs">
-            <button class="main-tab active" data-view="templates">🧪 Templates</button>
+            <button class="main-tab active" data-view="vcf">🛠️ VPN Fixer v8</button>
+            <button class="main-tab" data-view="templates">🧪 Templates</button>
             <button class="main-tab" data-view="fixer">🩺 Config Fixer</button>
             <button class="main-tab" data-view="ech">🛡️ ECH</button>
             <button class="main-tab" data-view="enhancer">🧬 Fragment + Fingerprint</button>
@@ -329,6 +330,153 @@
                             finalmask fragment with <code>maxSplit</code> and UDP noise.</li>
                         <li>A template cannot change the server side: if your server's IP or domain is blocked, use template
                             B with CDN addresses or clean IPs that reach the same server.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+
+        <!-- ===== View: VPN Config Fixer v8 (upgraded standalone fixer) ===== -->
+        <div id="view-vcf" dir="rtl" lang="fa" style="display:none;">
+            <div class="config-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span class="card-icon">🛠️</span>
+                        <div>
+                            <h2>VPN Config Fixer <span class="vcf-ver">v8</span></h2>
+                            <p class="card-hint">نسخه‌ی ارتقایافته‌ی ابزار اصلاح کانفیگ شما. کانفیگ JSON پنل (سنایی / x-ui / خروجی v2rayNG) یا لینک
+                                vless / vmess / trojan را بچسبانید. یک کانفیگ ساخته می‌شود که چند مسیر را هم‌زمان امتحان می‌کند —
+                                با فرگمنت، بدون فرگمنت، با آی‌پی تمیز — و خودش مسیری را که روی اینترنت فعلی (همراه اول یا ایرانسل) کار می‌کند انتخاب می‌کند.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <textarea id="vcf-input" class="config-input" dir="ltr"
+                        placeholder="Paste your full Xray JSON config { ... }&#10;— or a vless:// vmess:// trojan:// link"
+                        spellcheck="false"></textarea>
+                    <button class="btn-clear" id="vcf-clear" title="پاک کردن">✕</button>
+                </div>
+                <div class="vcf-toolbar">
+                    <label class="btn-subtle" for="vcf-file">📂 انتخاب فایل</label>
+                    <input type="file" id="vcf-file" accept=".txt,.json,.conf" hidden>
+                    <button class="btn-subtle" id="vcf-sample" type="button">📄 نمونه</button>
+                    <span class="vcf-filename" id="vcf-filename"></span>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <h3 class="settings-title">⚙️ روش اصلاح</h3>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label for="vcf-mode">ساختار خروجی</label>
+                        <select id="vcf-mode">
+                            <option value="multipath" selected>چندمسیره + انتخاب خودکار (پیشنهادی)</option>
+                            <option value="single">تک‌مسیره</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="vcf-fragment">فرگمنت TLS (finalmask)</label>
+                        <select id="vcf-fragment">
+                            <option value="add" selected>افزودن مقدار سالم همراه اول (1-3 · 50-100 · 10-20)</option>
+                            <option value="keep">نگه داشتن فرگمنت خود کانفیگ</option>
+                            <option value="strip">حذف (مثل نسخه‌ی ۷)</option>
+                        </select>
+                    </div>
+                    <div class="setting-item setting-item-wide">
+                        <label for="vcf-cleanips">آی‌پی‌های تمیز / آدرس‌های اضافه — هر خط یکی (مهم‌ترین گزینه برای همراه اول)</label>
+                        <textarea id="vcf-cleanips" class="setting-textarea" rows="3" dir="ltr" spellcheck="false"
+                            placeholder="198.51.100.1&#10;198.51.100.2"></textarea>
+                    </div>
+                </div>
+                <details class="vcf-more">
+                    <summary>تنظیمات بیشتر</summary>
+                    <div class="settings-grid">
+                        <div class="setting-item setting-item-wide">
+                            <label for="vcf-servers">دامنه‌ی پنل = دامنه‌های اتصال (اختیاری؛ فقط روی همین دستگاه ذخیره می‌شود)</label>
+                            <textarea id="vcf-servers" class="setting-textarea" rows="3" dir="ltr" spellcheck="false"
+                                placeholder="panel.example.com = cdn1.example.com, cdn2.example.com"></textarea>
+                        </div>
+                        <div class="setting-item setting-item-wide">
+                            <label for="vcf-snis">SNIهای جایگزین (اختیاری؛ دامنه‌های دیگر روی همان حساب CDN)</label>
+                            <textarea id="vcf-snis" class="setting-textarea" rows="2" dir="ltr" spellcheck="false" placeholder="other.example.com"></textarea>
+                        </div>
+                        <div class="setting-item">
+                            <label for="vcf-alpn">ALPN (فقط WebSocket)</label>
+                            <select id="vcf-alpn">
+                                <option value="keep" selected>بدون تغییر</option>
+                                <option value="mixed">ترکیبی؛ هر مسیر متفاوت</option>
+                                <option value="h2only">فقط h2</option>
+                                <option value="h2">h2 + http/1.1</option>
+                                <option value="h1">http/1.1</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label for="vcf-policy">زمان‌بندی policy</label>
+                            <select id="vcf-policy">
+                                <option value="safe" selected>محافظه‌کار (handshake 8 / up 4 / down 4)</option>
+                                <option value="sample">مطابق نمونه‌ها (3 / 2 / 4)</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label for="vcf-remarks">نام کانفیگ (اختیاری)</label>
+                            <input type="text" id="vcf-remarks" dir="ltr" spellcheck="false" placeholder="name · MCI-fix">
+                        </div>
+                        <div class="setting-item setting-item-wide fixer-checks">
+                            <label><input type="checkbox" id="vcf-dns" checked> DNS داخلی (Shecan / Begzar) برای دامنه‌های ایرانی و دامنه‌ی سرور</label>
+                            <label><input type="checkbox" id="vcf-template"> بازسازی routing مطابق نمونه‌های موفق</label>
+                            <label><input type="checkbox" id="vcf-dropquic"> حذف quic از sniffing</label>
+                        </div>
+                    </div>
+                </details>
+            </div>
+
+            <div class="generate-section">
+                <button class="btn-generate" id="btn-vcf" disabled>
+                    <span class="btn-icon">⚡</span> اصلاح کانفیگ
+                </button>
+                <p class="generate-hint" id="vcf-hint">کانفیگ یا لینک را بالا بچسبانید</p>
+            </div>
+
+            <div class="output-section" id="vcf-output-section" style="display:none;">
+                <div class="vcf-scores" id="vcf-scores"></div>
+                <div class="vcf-log" id="vcf-log"></div>
+                <div class="output-header">
+                    <h3>📋 کانفیگ اصلاح‌شده</h3>
+                    <div class="output-actions">
+                        <button class="btn-copy" id="btn-copy-vcf" title="Copy to clipboard">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                        <button class="btn-download" id="btn-download-vcf" title="Download as .json">
+                            <span class="download-icon">💾</span> .json
+                        </button>
+                        <button class="btn-download" id="btn-pack-vcf" title="یک کانفیگ جدا برای هر مسیر">
+                            <span class="download-icon">🧪</span> بسته‌ی تست
+                        </button>
+                    </div>
+                </div>
+                <div class="output-remark" id="vcf-output-remark"></div>
+                <pre class="output-code" dir="ltr"><code id="vcf-output"></code></pre>
+            </div>
+
+            <details class="info-section" id="vcf-history-box">
+                <summary>🕘 کانفیگ‌های اخیر (روی همین دستگاه)</summary>
+                <div class="info-content" id="vcf-history"></div>
+            </details>
+
+            <details class="info-section">
+                <summary>ℹ️ چرا کانفیگ روی ایرانسل وصل است ولی روی همراه اول نه؟</summary>
+                <div class="info-content">
+                    <ul>
+                        <li><strong>فیلتر SNI.</strong> همراه اول نام دامنه را از بسته‌ی ClientHello می‌خواند. فرگمنت
+                            (<code>finalmask</code>) این بسته را خرد می‌کند. نسخه‌ی ۷ ابزار فرگمنت را حذف می‌کرد؛ نسخه‌ی ۸ مقدار
+                            کانفیگ سالم همراه اول را اضافه می‌کند (نیاز به Xray-core 26+ / نسخه‌ی جدید v2rayNG).</li>
+                        <li><strong>آی‌پی CDN مسدود.</strong> اگر دامنه پشت Cloudflare است، همراه اول ممکن است بازه‌ی آی‌پی‌ای را که
+                            دامنه به آن حل می‌شود ببندد. با آی‌پی تمیز، آدرس عوض می‌شود ولی SNI و Host همان دامنه می‌مانند.</li>
+                        <li><strong>DNS.</strong> حل کردن دامنه‌ی سرور با DNS خارجی (مثل 223.5.5.5) یا از مسیر خود پروکسی ممکن است روی
+                            یک اپراتور جواب ندهد؛ v8 آن را با DNS داخلی و مستقیم حل می‌کند.</li>
+                        <li><strong>یک کانفیگ برای هر دو اپراتور.</strong> balancer با <code>burstObservatory</code> هر دقیقه همه‌ی مسیرها را
+                            می‌سنجد؛ مسیر اصلیِ بدون فرگمنت (همان که روی ایرانسل کار می‌کند) همیشه fallback است.</li>
+                        <li>اگر آی‌پی یا دامنه‌ی سرور روی همراه اول کاملاً مسدود باشد، هیچ تنظیمی در کلاینت کمک نمی‌کند — آی‌پی تمیز،
+                            دامنه‌ی جدید یا REALITY روی سرور لازم است.</li>
                     </ul>
                 </div>
             </details>
