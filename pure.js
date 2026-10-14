@@ -2571,6 +2571,180 @@ function vcfMemberPack(result) {
     return { json: JSON.stringify(pack, null, 2), count: pack.length };
 }
 
+// ===== Shadowsocks tab (domestic-relay layout) =====
+// Taken from two configs that connect on every Iranian network: plain
+// Shadowsocks (chacha20-ietf-poly1305, TCP, no TLS) to a server inside Iran
+// (an .ir domain pinned in dns.hosts to an Iranian IP) on a high port. The
+// Iranian server relays to the foreign one, so the client's own traffic
+// never crosses the international filter. Shadowsocks straight to a foreign
+// IP has no such protection: DPI flags fully-encrypted traffic.
+const SS_AEAD_METHODS = [
+    'chacha20-ietf-poly1305', 'chacha20-poly1305', 'xchacha20-ietf-poly1305', 'xchacha20-poly1305',
+    'aes-128-gcm', 'aes-256-gcm',
+    '2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305'
+];
+const SS_DOMESTIC_DNS = '223.5.5.5';
+
+// Accepts a full JSON config (or array), or ss:// links one per line.
+// Returns { servers: [{ address, port, method, password, remarks, pin }], cfg } or { error }.
+function ssSourceServers(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return { error: 'Paste a Shadowsocks config or ss:// link' };
+    if (looksLikeJsonConfig(text)) {
+        const parsed = parseFullConfigJson(text);
+        if (parsed.error) return parsed;
+        const servers = [];
+        parsed.configs.forEach(cfg => {
+            const hosts = (cfg.dns && cfg.dns.hosts) || {};
+            cfg.outbounds.filter(o => o && o.protocol === 'shadowsocks').forEach(ob => {
+                ((ob.settings && ob.settings.servers) || []).forEach(s => {
+                    if (!s || !s.address) return;
+                    const pin = [].concat(hosts[s.address] || []).find(ip => /^\d{1,3}(\.\d{1,3}){3}$/.test(String(ip))) || '';
+                    servers.push({
+                        address: String(s.address), port: Number(s.port) || 0, method: String(s.method || ''),
+                        password: String(s.password || ''), remarks: String(cfg.remarks || ''), pin,
+                        network: (ob.streamSettings && ob.streamSettings.network) || 'tcp',
+                        security: (ob.streamSettings && ob.streamSettings.security) || 'none',
+                        mux: !!(ob.mux && ob.mux.enabled)
+                    });
+                });
+            });
+        });
+        if (!servers.length) return { error: 'No Shadowsocks outbound found in the config' };
+        return { servers, cfg: parsed.configs[0] };
+    }
+    const servers = [];
+    for (const line of text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)) {
+        if (!/^ss:\/\//i.test(line)) return { error: 'Not an ss:// link: ' + truncateStr(line, 40) };
+        const p = parseShadowsocks(line);
+        if (p.error) return p;
+        servers.push({ address: p.server, port: p.port || 0, method: p.method || '', password: p.password || '',
+            remarks: p.remark || '', pin: '', network: 'tcp', security: 'none', mux: false });
+    }
+    return { servers, cfg: null };
+}
+
+// "host = 203.0.113.5" per line → { host: ip }.
+function ssParsePins(text) {
+    const out = {};
+    String(text || '').split(/\r?\n/).forEach(l => {
+        const m = l.replace(/#.*/, '').match(/^\s*([^\s=]+)\s*=\s*(\d{1,3}(?:\.\d{1,3}){3})\s*$/);
+        if (m) out[m[1].toLowerCase()] = m[2];
+    });
+    return out;
+}
+
+function analyzeShadowsocks(raw) {
+    const src = ssSourceServers(raw);
+    if (src.error) return src;
+    const items = [];
+    const add = (level, msg) => items.push({ level, msg });
+    src.servers.forEach((s, i) => {
+        const name = (src.servers.length > 1 ? '#' + (i + 1) + ' ' : '') + s.address + ':' + s.port;
+        const m = s.method.toLowerCase();
+        if (!m || m === 'none' || m === 'plain') add('error', name + ': method "' + (m || 'empty') + '" sends traffic unencrypted.');
+        else if (!SS_AEAD_METHODS.includes(m)) add('error', name + ': method ' + m + ' is a legacy stream cipher (removed from Xray). Use chacha20-ietf-poly1305 on server and client.');
+        else if (m.startsWith('2022-')) add('info', name + ': ' + m + ' (Shadowsocks-2022) — the password must be a base64 key of the right length, and the server must run the same method.');
+        else add('ok', name + ': ' + m + ' (AEAD) — the method the working configs use.');
+        if (!s.password) add('error', name + ': empty password.');
+        if (s.security !== 'none') add('warn', name + ': streamSettings.security "' + s.security + '" on Shadowsocks — the working configs use plain TCP.');
+        if (s.network !== 'tcp') add('info', name + ': transport ' + s.network + ' — the working configs use plain TCP.');
+        if (s.mux) add('info', name + ': mux is on — the working configs leave it off.');
+        if (isIpAddress(s.address)) {
+            add('info', name + ': address is an IP — no DNS needed. It must be your server inside Iran (the relay), not the foreign one.');
+        } else if (s.pin) {
+            add('ok', name + ': domain pinned in dns.hosts → ' + s.pin + ' (no DNS lookup, as in the working configs).');
+        } else {
+            add('warn', name + ': domain is not pinned in dns.hosts — every connect waits on DNS. Add "' + s.address + ' = <relay IP>" below.');
+        }
+        if (/\.ir$/i.test(s.address)) add('ok', name + ': .ir domain — typical of a relay server inside Iran.');
+        if (s.port === 443 || s.port === 80) add('info', name + ': port ' + s.port + ' — plain Shadowsocks on 443/80 does not look like HTTPS; the working configs use high ports (e.g. 42124).');
+    });
+    add('info', 'Shadowsocks has no TLS camouflage. It connects on MCI and Irancell when the server is inside Iran and relays abroad; straight to a foreign IP it is usually detected and blocked.');
+    return { items, servers: src.servers.map(s => ({ address: s.address, port: s.port, method: s.method, pin: s.pin })) };
+}
+
+// SIP002 share link.
+function ssLink(s) {
+    const user = encodeUtf8ToB64(s.method + ':' + s.password).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    const host = String(s.address).includes(':') ? '[' + s.address + ']' : s.address;
+    return 'ss://' + user + '@' + host + ':' + s.port + (s.remarks ? '#' + encodeURIComponent(s.remarks) : '');
+}
+
+// opts: { pins: "host = ip" text, method: 'keep' | method, balancer: bool,
+//         dns: 'template' (223.5.5.5 as in the working configs) | 'shecan', remarks }
+// Returns { config, json, links, notes } or { error }.
+function buildShadowsocksConfig(raw, opts) {
+    const o = Object.assign({ pins: '', method: 'keep', balancer: true, dns: 'template', remarks: '' }, opts || {});
+    const src = ssSourceServers(raw);
+    if (src.error) return src;
+    const pins = ssParsePins(o.pins);
+    const notes = [];
+    const servers = src.servers.map(s => Object.assign({}, s, {
+        method: o.method && o.method !== 'keep' ? o.method : (s.method || 'chacha20-ietf-poly1305'),
+        pin: pins[s.address.toLowerCase()] || s.pin
+    }));
+    const hosts = {};
+    servers.forEach(s => { if (!isIpAddress(s.address) && s.pin) hosts[s.address] = s.pin; });
+    const unpinned = servers.filter(s => !isIpAddress(s.address) && !s.pin).map(s => s.address);
+    if (Object.keys(hosts).length) notes.push('pinned ' + Object.keys(hosts).map(h => h + ' → ' + hosts[h]).join(', '));
+    if (unpinned.length) notes.push('not pinned: ' + unpinned.join(', ') + ' (resolved by DNS)');
+    const dnsAddr = o.dns === 'shecan' ? FIXER_DOMESTIC_DNS[0] : SS_DOMESTIC_DNS;
+    const multi = servers.length > 1 && o.balancer;
+    const proxyTag = s => multi ? 'ss-' + servers.indexOf(s) : 'proxy';
+    const outbound = s => ({
+        mux: { concurrency: -1, enabled: false },
+        protocol: 'shadowsocks',
+        settings: { servers: [{ address: s.address, level: 8, method: s.method, ota: false, password: s.password, port: s.port }] },
+        streamSettings: {
+            network: 'tcp',
+            sockopt: { domainStrategy: 'UseIP', happyEyeballs: { interleave: 2, maxConcurrentTry: 4, prioritizeIPv6: false, tryDelayMs: 250 } },
+            tcpSettings: { header: { type: 'none' } }
+        },
+        tag: proxyTag(s)
+    });
+    const used = multi ? servers : servers.slice(0, 1);
+    if (!multi && servers.length > 1) notes.push('only the first server used (balancer off)');
+    const cfg = templateCommon(o.remarks || (src.cfg && src.cfg.remarks) || servers[0].remarks || 'Shadowsocks relay');
+    cfg.inbounds[0].sniffing.destOverride = ['http', 'tls', 'quic'];
+    cfg.dns = {
+        hosts: hosts,
+        servers: [
+            '1.1.1.1',
+            { address: dnsAddr, domains: ['geosite:private'], skipFallback: true, tag: 'domestic-dns_0_0' },
+            { address: dnsAddr, domains: ['domain:ir', 'geosite:category-ir'], skipFallback: true, tag: 'domestic-dns_1_0' }
+        ],
+        tag: 'dns-module'
+    };
+    cfg.outbounds = used.map(outbound).concat([
+        { protocol: 'freedom', streamSettings: { network: 'tcp', sockopt: { domainStrategy: 'UseIP' } }, tag: 'direct' },
+        { protocol: 'blackhole', settings: { response: { type: 'http' } }, tag: 'block' }
+    ]);
+    const to = multi ? { balancerTag: 'auto' } : { outboundTag: 'proxy' };
+    cfg.routing = {
+        domainStrategy: 'IPIfNonMatch',
+        rules: [
+            { network: 'udp', outboundTag: 'block', port: '443', type: 'field' },
+            { ip: ['ext:geoip-only-cn-private.dat:private'], outboundTag: 'direct', type: 'field' },
+            { domain: ['geosite:private'], outboundTag: 'direct', type: 'field' },
+            { domain: ['domain:ir', 'geosite:category-ir'], outboundTag: 'direct', type: 'field' },
+            { ip: ['geoip:ir'], outboundTag: 'direct', type: 'field' },
+            { inboundTag: ['domestic-dns_0_0', 'domestic-dns_1_0'], outboundTag: 'direct', type: 'field' },
+            Object.assign({ inboundTag: ['dns-module'], type: 'field' }, to)
+        ]
+    };
+    if (multi) {
+        cfg.routing.rules.push(Object.assign({ port: '0-65535', type: 'field' }, to));
+        cfg.routing.balancers = [{ tag: 'auto', selector: ['ss-'], strategy: { type: 'leastLoad' }, fallbackTag: 'ss-0' }];
+        cfg.burstObservatory = { subjectSelector: ['ss-'], pingConfig: { destination: 'http://www.gstatic.com/generate_204', interval: '1m', sampling: 2, timeout: '8s' } };
+        notes.push(used.length + ' servers behind a leastLoad balancer (fallback ss-0)');
+    }
+    // Key order as in the working configs.
+    const ordered = { dns: cfg.dns, inbounds: cfg.inbounds, log: cfg.log, outbounds: cfg.outbounds, policy: cfg.policy, remarks: cfg.remarks, routing: cfg.routing, stats: cfg.stats };
+    if (cfg.burstObservatory) ordered.burstObservatory = cfg.burstObservatory;
+    return { config: ordered, json: JSON.stringify(ordered, null, 2), links: servers.map(ssLink), notes };
+}
+
 // Node test harness: browsers ignore this block (`module` is undefined there).
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -2582,6 +2756,7 @@ if (typeof module !== 'undefined' && module.exports) {
         FIXER_FRAGMENT_PRESETS, FIXER_FINGERPRINTS, FIXER_FRAGMENT_TAG, isIpAddress, dnsDomainsMatch,
         diagnoseFullConfig, fixFullConfigCore, buildFixTestPack, linkToFullConfig,
         FIXER_DOMESTIC_DNS, TEMPLATE_A_FRAGMENT, buildTemplateA, buildTemplateB, describeConfigTechniques,
+        SS_AEAD_METHODS, ssSourceServers, ssParsePins, analyzeShadowsocks, ssLink, buildShadowsocksConfig,
         VCF_FRAGMENT, VCF_DEFAULTS, vcfList, vcfParseServers, vcfFix, vcfMemberPack,
         parseProxyURLSingle, parseProxyURL, parseVless, parseVmess, parseTrojan, parseShadowsocks, parseSocks, parseHttp,
         buildStreamSettings, buildProxyOutbound, buildChainOutbound, buildSingboxOutbound,

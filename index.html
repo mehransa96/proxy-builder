@@ -39,6 +39,7 @@
         <!-- Main Tabs -->
         <nav class="main-tabs">
             <button class="main-tab active" data-view="vcf">🛠️ VPN Fixer v8</button>
+            <button class="main-tab" data-view="ss">🔐 Shadowsocks</button>
             <button class="main-tab" data-view="templates">🧪 Templates</button>
             <button class="main-tab" data-view="fixer">🩺 Config Fixer</button>
             <button class="main-tab" data-view="ech">🛡️ ECH</button>
@@ -477,6 +478,113 @@
                             می‌سنجد؛ مسیر اصلیِ بدون فرگمنت (همان که روی ایرانسل کار می‌کند) همیشه fallback است.</li>
                         <li>اگر آی‌پی یا دامنه‌ی سرور روی همراه اول کاملاً مسدود باشد، هیچ تنظیمی در کلاینت کمک نمی‌کند — آی‌پی تمیز،
                             دامنه‌ی جدید یا REALITY روی سرور لازم است.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+
+        <!-- ===== View: Shadowsocks relay ===== -->
+        <div id="view-ss" style="display:none;">
+            <div class="config-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span class="card-icon">🔐</span>
+                        <div>
+                            <h2>Shadowsocks Relay</h2>
+                            <p class="card-hint">Rebuilds a Shadowsocks config in the layout of two configs that connect on every
+                                Iranian network: plain Shadowsocks (<code>chacha20-ietf-poly1305</code>, TCP) to a relay server
+                                <b>inside Iran</b> on a high port, its domain pinned in <code>dns.hosts</code>. Paste a full JSON
+                                config (or an array of them) or one <code>ss://</code> link per line.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <textarea id="ss-input" class="config-input"
+                        placeholder="Paste your Shadowsocks JSON config { ... }&#10;— or ss:// links, one per line"
+                        spellcheck="false"></textarea>
+                    <button class="btn-clear" id="ss-clear" title="Clear">✕</button>
+                </div>
+                <div class="parsed-info" id="ss-info"></div>
+            </div>
+
+            <div class="settings-card">
+                <h3 class="settings-title">⚙️ Options</h3>
+                <div class="settings-grid">
+                    <div class="setting-item setting-item-wide">
+                        <label for="ss-pins">Pin relay domains — <code>domain = IPv4</code>, one per line</label>
+                        <div class="tpl-inline">
+                            <textarea id="ss-pins" class="setting-textarea" rows="2" spellcheck="false" placeholder="relay.example.ir = 203.0.113.20"></textarea>
+                            <button class="btn-subtle" id="btn-ss-resolve" type="button" title="Look up unpinned domains (DNS over HTTPS)">🔎 Look up</button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="ss-method">Method</label>
+                        <select id="ss-method">
+                            <option value="keep" selected>keep as is</option>
+                            <option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305 (working configs)</option>
+                            <option value="aes-128-gcm">aes-128-gcm</option>
+                            <option value="aes-256-gcm">aes-256-gcm</option>
+                            <option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="ss-dns">Domestic DNS</label>
+                        <select id="ss-dns">
+                            <option value="template" selected>223.5.5.5 (as in the working configs)</option>
+                            <option value="shecan">178.22.122.100 (Shecan)</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="ss-remarks">Name — empty to keep</label>
+                        <input type="text" id="ss-remarks" spellcheck="false" placeholder="keep current">
+                    </div>
+                    <div class="setting-item fixer-checks">
+                        <label><input type="checkbox" id="ss-balancer" checked> Several servers → one leastLoad balancer</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="generate-section">
+                <button class="btn-generate" id="btn-ss" disabled>
+                    <span class="btn-icon">🔐</span> Build Shadowsocks Config
+                </button>
+                <p class="generate-hint" id="ss-hint">Paste a Shadowsocks config or link above to enable</p>
+            </div>
+
+            <div class="output-section" id="ss-output-section" style="display:none;">
+                <div class="output-header">
+                    <h3>📋 Shadowsocks Config</h3>
+                    <div class="output-actions">
+                        <button class="btn-copy" id="btn-copy-ss" title="Copy to clipboard">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                        <button class="btn-download" id="btn-download-ss" title="Download as .json">
+                            <span class="download-icon">💾</span> .json
+                        </button>
+                        <button class="btn-copy" id="btn-copy-ss-links" title="Copy ss:// links">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                    </div>
+                </div>
+                <div class="output-remark" id="ss-output-remark"></div>
+                <pre class="output-code"><code id="ss-links"></code></pre>
+                <pre class="output-code"><code id="ss-output"></code></pre>
+            </div>
+
+            <details class="info-section">
+                <summary>ℹ️ Why these Shadowsocks configs connect on every network</summary>
+                <div class="info-content">
+                    <ul>
+                        <li><strong>The server is inside Iran.</strong> Both relay domains point to IPs in Tehran. The phone
+                            only talks to a domestic server, so the international filter never sees the traffic; that server
+                            forwards it abroad (the configs are named 🇩🇪).</li>
+                        <li><strong>Plain Shadowsocks, AEAD cipher.</strong> <code>chacha20-ietf-poly1305</code> over TCP, no TLS,
+                            no transport tricks, mux off, high ports (42124 / 52124).</li>
+                        <li><strong>No DNS on connect.</strong> The relay domain is pinned to its IP in <code>dns.hosts</code>.</li>
+                        <li><strong>Iranian traffic stays direct.</strong> .ir domains, geoip:ir and private ranges go out
+                            directly; the domestic DNS is routed direct too.</li>
+                        <li>Shadowsocks straight to a foreign server is usually detected and blocked — the relay is what makes
+                            it work. The project guide explains how to build the relay in 3x-ui.</li>
                     </ul>
                 </div>
             </details>

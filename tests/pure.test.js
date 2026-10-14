@@ -1962,3 +1962,57 @@ describe('VPN Config Fixer v8 (upgraded standalone fixer)', () => {
         assert.ok(vcfFix('{"a":1}', {}).error);
     });
 });
+
+describe('Shadowsocks relay tab', () => {
+    const { analyzeShadowsocks, buildShadowsocksConfig, ssSourceServers, ssParsePins, ssLink } = pure;
+    const GOOD = fs.readFileSync(path.join(__dirname, 'fixtures', 'known-good-ss-relay.json'), 'utf8');
+    const sorted = x => Array.isArray(x) ? x.map(sorted) : x && typeof x === 'object'
+        ? Object.fromEntries(Object.keys(x).sort().map(k => [k, sorted(x[k])])) : x;
+
+    it('reads the working config: AEAD method, pinned .ir relay domain', () => {
+        const r = analyzeShadowsocks(GOOD);
+        assert.ok(!r.items.some(i => i.level === 'error' || i.level === 'warn'));
+        assert.deepEqual(r.servers, [{ address: 'relay.example.ir', port: 42124, method: 'chacha20-ietf-poly1305', pin: '203.0.113.20' }]);
+    });
+
+    it('rebuilds exactly the working layout (only client default hosts / fakedns differ)', () => {
+        const r = buildShadowsocksConfig(GOOD, {});
+        const want = JSON.parse(GOOD);
+        want.dns.hosts = { 'relay.example.ir': '203.0.113.20' };
+        want.inbounds[0].sniffing.destOverride = ['http', 'tls', 'quic'];
+        assert.deepEqual(sorted(r.config), sorted(want));
+    });
+
+    it('links round-trip and pins apply', () => {
+        const link = ssLink({ address: 'relay.example.ir', port: 42124, method: 'chacha20-ietf-poly1305', password: 'p@ss:1', remarks: 'a b' });
+        const s = ssSourceServers(link).servers[0];
+        assert.equal(s.password, 'p@ss:1');
+        assert.equal(s.remarks, 'a b');
+        assert.deepEqual(ssParsePins('relay.example.ir = 203.0.113.9\nbad line'), { 'relay.example.ir': '203.0.113.9' });
+        const r = buildShadowsocksConfig(link, { pins: 'relay.example.ir = 203.0.113.9' });
+        assert.equal(r.config.dns.hosts['relay.example.ir'], '203.0.113.9');
+        assert.equal(r.config.outbounds[0].settings.servers[0].password, 'p@ss:1');
+        const warn = analyzeShadowsocks(link).items.map(i => i.level);
+        assert.ok(warn.includes('warn'), 'unpinned domain warns');
+    });
+
+    it('several servers become a leastLoad balancer', () => {
+        const two = GOOD.trim() + '\n';
+        const arr = '[' + two + ',' + two.replace('relay.example.ir', 'relay2.example.ir').replace('42124', '52124') + ']';
+        const r = buildShadowsocksConfig(arr, {});
+        assert.deepEqual(r.config.outbounds.map(o => o.tag), ['ss-0', 'ss-1', 'direct', 'block']);
+        assert.equal(r.config.routing.balancers[0].fallbackTag, 'ss-0');
+        assert.ok(r.config.routing.rules.some(x => x.port === '0-65535' && x.balancerTag === 'auto'));
+        assert.equal(r.links.length, 2);
+        const one = buildShadowsocksConfig(arr, { balancer: false });
+        assert.deepEqual(one.config.outbounds.map(o => o.tag), ['proxy', 'direct', 'block']);
+    });
+
+    it('flags legacy ciphers and rejects non-Shadowsocks input', () => {
+        const bad = GOOD.replace('chacha20-ietf-poly1305', 'aes-256-cfb');
+        assert.ok(analyzeShadowsocks(bad).items.some(i => i.level === 'error'));
+        assert.equal(buildShadowsocksConfig(bad, { method: 'chacha20-ietf-poly1305' }).config.outbounds[0].settings.servers[0].method, 'chacha20-ietf-poly1305');
+        assert.ok(ssSourceServers('vless://x@y:1').error);
+        assert.ok(ssSourceServers('{"outbounds":[]}').error);
+    });
+});

@@ -70,6 +70,7 @@
     const viewFixer = document.getElementById('view-fixer');
     const viewTemplates = document.getElementById('view-templates');
     const viewVcf = document.getElementById('view-vcf');
+    const viewSs = document.getElementById('view-ss');
 
     // Enhancer elements
     const enhancerInput = document.getElementById('enhancer-input');
@@ -1898,8 +1899,9 @@
         viewFixer.style.display = viewName === 'fixer' ? '' : 'none';
         viewTemplates.style.display = viewName === 'templates' ? '' : 'none';
         viewVcf.style.display = viewName === 'vcf' ? '' : 'none';
+        viewSs.style.display = viewName === 'ss' ? '' : 'none';
         document.querySelectorAll('.protocol-badges .badge').forEach(badge => {
-            const show = viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
+            const show = viewName === 'ss' ? badge.dataset.protocol === 'ss' : viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
                 || (['fixer', 'templates', 'vcf'].includes(viewName) && badge.dataset.protocol === 'vmess');
             badge.style.display = show ? '' : 'none';
         });
@@ -2777,4 +2779,109 @@
     vcfLoadOpts();
     vcfRenderHistory();
     onVcfInput();
+
+    // ===== Shadowsocks relay tab =====
+    const ssInput = document.getElementById('ss-input');
+    const ssClear = document.getElementById('ss-clear');
+    const ssInfo = document.getElementById('ss-info');
+    const ssPins = document.getElementById('ss-pins');
+    const ssMethod = document.getElementById('ss-method');
+    const ssDns = document.getElementById('ss-dns');
+    const ssRemarks = document.getElementById('ss-remarks');
+    const ssBalancer = document.getElementById('ss-balancer');
+    const btnSs = document.getElementById('btn-ss');
+    const btnSsResolve = document.getElementById('btn-ss-resolve');
+    const ssHint = document.getElementById('ss-hint');
+    const ssOutSection = document.getElementById('ss-output-section');
+    const ssOut = document.getElementById('ss-output');
+    const ssLinksOut = document.getElementById('ss-links');
+    const ssOutRemark = document.getElementById('ss-output-remark');
+    const btnCopySs = document.getElementById('btn-copy-ss');
+    const btnDownloadSs = document.getElementById('btn-download-ss');
+    const btnCopySsLinks = document.getElementById('btn-copy-ss-links');
+    const SS_HINT = 'Paste a Shadowsocks config or link above to enable';
+    let ssOutputText = '';
+    let ssLinksText = '';
+    let ssServers = [];
+
+    function ssSetHint(text, isError) {
+        ssHint.textContent = text;
+        ssHint.style.color = isError ? '#f87171' : '';
+    }
+
+    function onSsInput() {
+        const val = ssInput.value.trim();
+        btnSs.disabled = true;
+        ssServers = [];
+        if (!val) { ssInfo.innerHTML = ''; ssSetHint(SS_HINT, false); return; }
+        const r = analyzeShadowsocks(val);
+        if (r.error) {
+            ssInfo.innerHTML = '<div class="error-msg">❌ ' + escapeHtml(r.error) + '</div>';
+            ssSetHint(SS_HINT, false);
+            return;
+        }
+        ssServers = r.servers;
+        const icon = { ok: '✅', info: 'ℹ️', warn: '⚠️', error: '❌' };
+        ssInfo.innerHTML = r.items.map(i =>
+            '<div class="info-row"><span class="info-label">' + icon[i.level] + '</span><span class="info-value">' + escapeHtml(i.msg) + '</span></div>').join('');
+        const have = ssParsePins(ssPins.value);
+        const add = r.servers.filter(s => s.pin && !have[s.address.toLowerCase()]).map(s => s.address + ' = ' + s.pin);
+        if (add.length) ssPins.value = (ssPins.value.trim() ? ssPins.value.trim() + '\n' : '') + add.join('\n');
+        btnSs.disabled = false;
+        ssSetHint('Press Build', false);
+    }
+
+    function ssBuild() {
+        const raw = ssInput.value.trim();
+        if (!raw) return;
+        const r = buildShadowsocksConfig(raw, {
+            pins: ssPins.value, method: ssMethod.value, dns: ssDns.value,
+            remarks: ssRemarks.value.trim(), balancer: ssBalancer.checked
+        });
+        if (r.error) { ssSetHint('❌ ' + r.error, true); return; }
+        ssOutputText = r.json;
+        ssLinksText = r.links.join('\n');
+        ssOut.innerHTML = highlightJSON(r.config);
+        ssLinksOut.textContent = ssLinksText;
+        ssOutRemark.textContent = r.notes.join(' · ');
+        ssOutSection.style.display = '';
+        btnCopySs.innerHTML = '<span class="copy-icon">📋</span> Copy';
+        btnCopySsLinks.innerHTML = '<span class="copy-icon">📋</span> Copy';
+        ssSetHint('Copy the JSON (v2rayNG: + → Import config from clipboard) or the ss:// link', false);
+    }
+
+    // DNS-over-HTTPS lookup of every relay domain that has no pin yet.
+    btnSsResolve.addEventListener('click', () => {
+        const have = ssParsePins(ssPins.value);
+        const todo = ssServers.map(s => s.address).filter((h, i, a) => a.indexOf(h) === i
+            && !/^[\d.]+$/.test(h) && !h.includes(':') && !have[h.toLowerCase()]);
+        if (!todo.length) { ssSetHint(ssServers.length ? 'Nothing left to look up' : 'Paste a config first', !ssServers.length); return; }
+        btnSsResolve.disabled = true;
+        ssSetHint('Looking up ' + todo.join(', ') + '…', false);
+        const one = host => fetch('https://dns.google/resolve?name=' + encodeURIComponent(host) + '&type=A')
+            .then(res => res.json())
+            .then(data => { const a = (data.Answer || []).find(x => x.type === 1); return a ? host + ' = ' + a.data : null; })
+            .catch(() => null);
+        Promise.all(todo.map(one)).then(lines => {
+            btnSsResolve.disabled = false;
+            const got = lines.filter(Boolean);
+            if (got.length) ssPins.value = (ssPins.value.trim() ? ssPins.value.trim() + '\n' : '') + got.join('\n');
+            ssSetHint(got.length === todo.length ? 'Pinned ' + got.length + ' domain(s)' : 'Lookup failed for some domains — enter the relay IP by hand', got.length !== todo.length);
+        });
+    });
+
+    btnSs.addEventListener('click', ssBuild);
+    ssInput.addEventListener('input', onSsInput);
+    ssClear.addEventListener('click', () => {
+        ssInput.value = '';
+        ssPins.value = '';
+        ssOutSection.style.display = 'none';
+        onSsInput();
+        ssInput.focus();
+    });
+    btnCopySs.addEventListener('click', () => copyTextWithFeedback(btnCopySs, ssOutputText, ssHint));
+    btnCopySsLinks.addEventListener('click', () => copyTextWithFeedback(btnCopySsLinks, ssLinksText, ssHint));
+    btnDownloadSs.addEventListener('click', () => {
+        if (ssOutputText) downloadText('shadowsocks-config.json', ssOutputText, 'application/json;charset=utf-8');
+    });
 })();
