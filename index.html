@@ -38,7 +38,8 @@
 
         <!-- Main Tabs -->
         <nav class="main-tabs">
-            <button class="main-tab active" data-view="fixer">🩺 Config Fixer</button>
+            <button class="main-tab active" data-view="templates">🧪 Templates</button>
+            <button class="main-tab" data-view="fixer">🩺 Config Fixer</button>
             <button class="main-tab" data-view="ech">🛡️ ECH</button>
             <button class="main-tab" data-view="enhancer">🧬 Fragment + Fingerprint</button>
             <button class="main-tab" data-view="chain">🔗 Chain Builder</button>
@@ -125,8 +126,8 @@
                         <input type="text" id="fixer-remarks" placeholder="Config name" spellcheck="false">
                     </div>
                     <div class="setting-item setting-item-wide fixer-checks">
-                        <label><input type="checkbox" id="fixer-dns" checked> Resolve the server domain directly (prevents a DNS loop through the proxy)</label>
-                        <label><input type="checkbox" id="fixer-alpn" checked> Force ALPN http/1.1 on ws / httpupgrade when h2 is set</label>
+                        <label><input type="checkbox" id="fixer-dns" checked> Resolve the server domain via a direct domestic DNS (prevents a DNS loop through the proxy)</label>
+                        <label><input type="checkbox" id="fixer-alpn"> Force ALPN http/1.1 on ws / httpupgrade when h2 is set</label>
                     </div>
                 </div>
             </div>
@@ -180,6 +181,154 @@
                             array with one config per preset plus a no-fragment control, each with its own name. Import it
                             (v2rayNG: Import config from clipboard), run the real-delay test, and keep the one that
                             connects.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+
+        <!-- ===== View: Templates from known-good configs ===== -->
+        <div id="view-templates" style="display:none;">
+            <div class="config-card" id="tpl-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span class="card-icon">🧪</span>
+                        <div>
+                            <h2>Working Templates</h2>
+                            <p class="card-hint">Rebuilds your config around one of two layouts taken from configs that
+                                connect on MCI. Paste your full JSON config or a VLESS / VMess / Trojan link — your server,
+                                UUID and transport are kept; DNS, routing, fingerprint and fragment come from the template.</p>
+                        </div>
+                    </div>
+                    <div class="card-header-right">
+                        <span class="protocol-tag" id="tpl-protocol-tag">—</span>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <textarea id="tpl-input" class="config-input"
+                        placeholder="Paste your full Xray JSON config { ... }&#10;— or a vless:// vmess:// trojan:// link"
+                        spellcheck="false"></textarea>
+                    <button class="btn-clear" id="tpl-clear" title="Clear">✕</button>
+                </div>
+                <div class="parsed-info" id="tpl-info"></div>
+            </div>
+
+            <div class="sub-tabs">
+                <button class="sub-tab active" data-tplsubtab="a">🅰 Direct + DNS pin (REALITY / TLS)</button>
+                <button class="sub-tab" data-tplsubtab="b">🅱 CDN multi-address balancer (TLS)</button>
+            </div>
+
+            <div class="settings-card sub-panel active" id="tpl-panel-a">
+                <h3 class="settings-title">🅰 Template A — single proxy, finalmask fragment, DNS pinned</h3>
+                <p class="card-hint tpl-desc">Modelled on a working VLESS + REALITY config: chrome fingerprint, finalmask
+                    fragment <code>1-3 · 50-100 · 10-20 · maxSplit 10</code> plus UDP noise, <code>UseIP</code> with
+                    happy-eyeballs, the server domain pinned to its IP in <code>dns.hosts</code> (or resolved by a direct
+                    domestic DNS), and every domestic DNS routed direct. Finalmask needs Xray-core 26+ (PattNG / a recent v2rayNG).</p>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label for="tpl-a-fp">Fingerprint</label>
+                        <select id="tpl-a-fp">
+                            <option value="chrome" selected>chrome</option>
+                            <option value="firefox">firefox</option>
+                            <option value="safari">safari</option>
+                            <option value="ios">ios</option>
+                            <option value="edge">edge</option>
+                            <option value="random">random</option>
+                            <option value="keep">keep as is</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="tpl-a-pin">Server IP to pin — empty to use direct DNS</label>
+                        <div class="tpl-inline">
+                            <input type="text" id="tpl-a-pin" placeholder="e.g. 203.0.113.10" spellcheck="false">
+                            <button class="btn-subtle" id="btn-tpl-resolve" type="button" title="Look up the server domain's IPv4 address (DNS over HTTPS)">🔎 Look up</button>
+                        </div>
+                    </div>
+                    <div class="setting-item setting-item-wide">
+                        <label>Fragment (packets · length · delay · maxSplit) — clear packets to skip</label>
+                        <div class="fixer-frag-fields tpl-frag-fields">
+                            <input type="text" id="tpl-a-packets" value="1-3" spellcheck="false" title="packets" placeholder="packets">
+                            <input type="text" id="tpl-a-length" value="50-100" spellcheck="false" title="length" placeholder="length">
+                            <input type="text" id="tpl-a-delay" value="10-20" spellcheck="false" title="delay (ms)" placeholder="delay">
+                            <input type="text" id="tpl-a-maxsplit" value="10" spellcheck="false" title="maxSplit" placeholder="maxSplit">
+                        </div>
+                    </div>
+                    <div class="setting-item setting-item-wide fixer-checks">
+                        <label><input type="checkbox" id="tpl-a-noise" checked> UDP noise (finalmask)</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-card sub-panel" id="tpl-panel-b">
+                <h3 class="settings-title">🅱 Template B — several addresses, leastLoad balancer</h3>
+                <p class="card-hint tpl-desc">Modelled on a working VLESS + ws + TLS CDN config: the same server reached
+                    through several addresses (CDN edges, clean IPs or other domains pointing at it), one balancer member
+                    each with chrome / edge fingerprints, <code>leastLoad</code> + <code>burstObservatory</code> to pick the
+                    fastest, a fallback member, Iranian DNS (Shecan / Begzar) for .ir domains and no core DNS for the server
+                    address. Only for TLS servers behind a CDN or with several reachable addresses.</p>
+                <div class="settings-grid">
+                    <div class="setting-item setting-item-wide">
+                        <label for="tpl-b-addresses">Addresses — one per line (empty = the original address)</label>
+                        <textarea id="tpl-b-addresses" class="setting-textarea" rows="4" spellcheck="false" placeholder="cdn-edge.example.com&#10;198.51.100.1&#10;198.51.100.2"></textarea>
+                    </div>
+                    <div class="setting-item">
+                        <label for="tpl-b-sni">SNI (serverName) — empty to keep</label>
+                        <input type="text" id="tpl-b-sni" placeholder="keep current" spellcheck="false">
+                    </div>
+                    <div class="setting-item">
+                        <label for="tpl-b-host">Host header — empty to keep</label>
+                        <input type="text" id="tpl-b-host" placeholder="keep current" spellcheck="false">
+                    </div>
+                    <div class="setting-item">
+                        <label for="tpl-b-alpn">ALPN</label>
+                        <select id="tpl-b-alpn">
+                            <option value="keep" selected>keep as is</option>
+                            <option value="http/1.1">http/1.1</option>
+                            <option value="h2">h2 (as in the working config)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="generate-section">
+                <button class="btn-generate" id="btn-tpl" disabled>
+                    <span class="btn-icon">🧪</span> Build from Template
+                </button>
+                <p class="generate-hint" id="tpl-hint">Paste a full JSON config or a link above to enable</p>
+            </div>
+
+            <div class="output-section" id="tpl-output-section" style="display:none;">
+                <div class="output-header">
+                    <h3 id="tpl-output-title">📋 Template Config</h3>
+                    <div class="output-actions">
+                        <button class="btn-copy" id="btn-copy-tpl" title="Copy to clipboard">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                        <button class="btn-download" id="btn-download-tpl" title="Download as .json">
+                            <span class="download-icon">💾</span> .json
+                        </button>
+                    </div>
+                </div>
+                <div class="output-remark" id="tpl-output-remark"></div>
+                <pre class="output-code"><code id="tpl-output"></code></pre>
+            </div>
+
+            <details class="info-section">
+                <summary>ℹ️ What the two working configs do differently</summary>
+                <div class="info-content">
+                    <ul>
+                        <li><strong>No DNS loop.</strong> Both keep the proxy from waiting on its own DNS: the REALITY
+                            config pins the server domain to its IP in <code>dns.hosts</code> and routes every domestic DNS
+                            direct; the CDN config sets no <code>sockopt.domainStrategy</code>, so the system resolves the
+                            server address.</li>
+                        <li><strong>An SNI the filter lets through.</strong> REALITY borrows a big site's TLS identity
+                            (<code>www.samsung.com</code>); the CDN config fronts a different, unfiltered domain as SNI and
+                            routes on the Host header.</li>
+                        <li><strong>Redundancy.</strong> The CDN config tries several addresses at once and keeps the
+                            fastest one alive with an observatory.</li>
+                        <li><strong>Fragment is optional.</strong> The CDN config uses none; the REALITY config uses a
+                            finalmask fragment with <code>maxSplit</code> and UDP noise.</li>
+                        <li>A template cannot change the server side: if your server's IP or domain is blocked, use template
+                            B with CDN addresses or clean IPs that reach the same server.</li>
                     </ul>
                 </div>
             </details>

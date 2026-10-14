@@ -68,6 +68,7 @@
     const viewEnhancer = document.getElementById('view-enhancer');
     const viewEch = document.getElementById('view-ech');
     const viewFixer = document.getElementById('view-fixer');
+    const viewTemplates = document.getElementById('view-templates');
 
     // Enhancer elements
     const enhancerInput = document.getElementById('enhancer-input');
@@ -1894,9 +1895,10 @@
         viewEnhancer.style.display = viewName === 'enhancer' ? '' : 'none';
         viewEch.style.display = viewName === 'ech' ? '' : 'none';
         viewFixer.style.display = viewName === 'fixer' ? '' : 'none';
+        viewTemplates.style.display = viewName === 'templates' ? '' : 'none';
         document.querySelectorAll('.protocol-badges .badge').forEach(badge => {
             const show = viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
-                || (viewName === 'fixer' && badge.dataset.protocol === 'vmess');
+                || ((viewName === 'fixer' || viewName === 'templates') && badge.dataset.protocol === 'vmess');
             badge.style.display = show ? '' : 'none';
         });
     }
@@ -1918,8 +1920,8 @@
         }
     }
 
-    // Apply badge visibility for the initial view (fixer is active by default)
-    switchMainTab('fixer');
+    // Apply badge visibility for the initial view (templates is active by default)
+    switchMainTab('templates');
 
 
     function switchSubTab(subTabName) {
@@ -2379,4 +2381,171 @@
         if (fixerOutputText) downloadText(fixerOutputName, fixerOutputText, 'application/json;charset=utf-8');
     });
     syncFixerMode();
+    // ===== Templates tab =====
+    // Rebuilds the pasted config around a layout taken from a known-good MCI
+    // config (pure.js: buildTemplateA / buildTemplateB / describeConfigTechniques).
+    const tplInput = document.getElementById('tpl-input');
+    const tplClear = document.getElementById('tpl-clear');
+    const tplInfo = document.getElementById('tpl-info');
+    const tplTag = document.getElementById('tpl-protocol-tag');
+    const tplSubTabs = document.querySelectorAll('[data-tplsubtab]');
+    const tplPanels = { a: document.getElementById('tpl-panel-a'), b: document.getElementById('tpl-panel-b') };
+    const tplAFp = document.getElementById('tpl-a-fp');
+    const tplAPin = document.getElementById('tpl-a-pin');
+    const tplAPackets = document.getElementById('tpl-a-packets');
+    const tplALength = document.getElementById('tpl-a-length');
+    const tplADelay = document.getElementById('tpl-a-delay');
+    const tplAMaxSplit = document.getElementById('tpl-a-maxsplit');
+    const tplANoise = document.getElementById('tpl-a-noise');
+    const btnTplResolve = document.getElementById('btn-tpl-resolve');
+    const tplBAddresses = document.getElementById('tpl-b-addresses');
+    const tplBSni = document.getElementById('tpl-b-sni');
+    const tplBHost = document.getElementById('tpl-b-host');
+    const tplBAlpn = document.getElementById('tpl-b-alpn');
+    const btnTpl = document.getElementById('btn-tpl');
+    const tplHint = document.getElementById('tpl-hint');
+    const tplOutSection = document.getElementById('tpl-output-section');
+    const tplOutTitle = document.getElementById('tpl-output-title');
+    const tplOutRemark = document.getElementById('tpl-output-remark');
+    const tplOut = document.getElementById('tpl-output');
+    const btnCopyTpl = document.getElementById('btn-copy-tpl');
+    const btnDownloadTpl = document.getElementById('btn-download-tpl');
+    const TPL_HINT = 'Paste a full JSON config or a link above to enable';
+    let tplMode = 'a';
+    let tplServerHost = '';
+    let tplOutputText = '';
+
+    function tplSetHint(text, isError) {
+        tplHint.textContent = text;
+        tplHint.style.color = isError ? 'var(--danger)' : '';
+    }
+
+    function tplResetOutput() {
+        tplOutSection.style.display = 'none';
+        tplOutputText = '';
+    }
+
+    function switchTplSubTab(mode) {
+        tplMode = mode;
+        tplSubTabs.forEach(t => t.classList.toggle('active', t.dataset.tplsubtab === mode));
+        Object.entries(tplPanels).forEach(([k, el]) => el.classList.toggle('active', k === mode));
+        tplResetOutput();
+    }
+    tplSubTabs.forEach(t => t.addEventListener('click', () => switchTplSubTab(t.dataset.tplsubtab)));
+
+    function onTplInput() {
+        tplResetOutput();
+        tplServerHost = '';
+        btnTpl.disabled = true;
+        const val = tplInput.value.trim();
+        if (!val) {
+            tplInfo.innerHTML = '';
+            tplTag.textContent = '—';
+            tplSetHint(TPL_HINT, false);
+            return;
+        }
+        let raw = val;
+        if (!looksLikeJsonConfig(val)) {
+            const conv = linkToFullConfig(val.split(/\r?\n/)[0]);
+            if (conv.error) {
+                tplTag.textContent = '—';
+                tplInfo.innerHTML = '<div class="error-msg">❌ ' + escapeHtml(conv.error) + '</div>';
+                tplSetHint(TPL_HINT, false);
+                return;
+            }
+            raw = conv.json;
+        }
+        const tech = describeConfigTechniques(raw);
+        const summary = summarizeFullConfig(raw);
+        if (tech.error || summary.error) {
+            tplTag.textContent = '—';
+            tplInfo.innerHTML = '<div class="error-msg">❌ ' + escapeHtml(tech.error || summary.error) + '</div>';
+            tplSetHint(TPL_HINT, false);
+            return;
+        }
+        const first = summary.outbounds[0];
+        tplServerHost = String(first.server || '');
+        tplTag.textContent = (first.security || 'none').toUpperCase();
+        tplInfo.innerHTML = tech.items.map(t =>
+            '<div class="info-row"><span class="info-label">•</span><span class="info-value">' + escapeHtml(t) + '</span></div>').join('');
+        btnTpl.disabled = false;
+        if (first.security === 'reality' && tplMode === 'b') switchTplSubTab('a');
+        tplSetHint(first.security === 'reality' ? 'REALITY server — use template A' : 'Choose a template and press Build', false);
+    }
+
+    function tplBuild() {
+        const raw = tplInput.value.trim();
+        if (!raw) return;
+        let r;
+        if (tplMode === 'a') {
+            const packets = tplAPackets.value.trim();
+            r = buildTemplateA(raw, {
+                fp: tplAFp.value,
+                fragment: packets ? { packets, length: tplALength.value, delay: tplADelay.value, maxSplit: tplAMaxSplit.value } : null,
+                noise: tplANoise.checked,
+                pinIp: tplAPin.value
+            });
+        } else {
+            r = buildTemplateB(raw, {
+                addresses: tplBAddresses.value,
+                sni: tplBSni.value,
+                host: tplBHost.value,
+                alpn: tplBAlpn.value
+            });
+        }
+        if (r.error) { tplSetHint('❌ ' + r.error, true); return; }
+        tplOutputText = r.json;
+        tplOutTitle.textContent = tplMode === 'a' ? '📋 Template A Config' : '📋 Template B Config';
+        tplOutRemark.textContent = r.notes.join(' · ');
+        tplOut.innerHTML = highlightJSON(r.config);
+        tplOutSection.style.display = '';
+        btnCopyTpl.innerHTML = '<span class="copy-icon">📋</span> Copy';
+        tplSetHint('Copy it, then in v2rayNG: + → Import config from clipboard', false);
+    }
+    btnTpl.addEventListener('click', tplBuild);
+
+    // DNS-over-HTTPS lookup of the server domain, to pin it in dns.hosts.
+    btnTplResolve.addEventListener('click', () => {
+        const host = tplServerHost;
+        if (!host || /^[\d.]+$/.test(host) || host.includes(':')) {
+            tplSetHint(host ? 'The server address is already an IP' : 'Paste a config first', !host);
+            return;
+        }
+        const endpoints = [
+            { url: 'https://dns.google/resolve?name=' + encodeURIComponent(host) + '&type=A', headers: {} },
+            { url: 'https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(host) + '&type=A', headers: { accept: 'application/dns-json' } }
+        ];
+        btnTplResolve.disabled = true;
+        tplSetHint('Looking up ' + host + '…', false);
+        const tryNext = (i) => {
+            if (i >= endpoints.length) {
+                btnTplResolve.disabled = false;
+                tplSetHint('Lookup failed — enter the server IP by hand', true);
+                return;
+            }
+            fetch(endpoints[i].url, { headers: endpoints[i].headers })
+                .then(res => res.json())
+                .then(data => {
+                    const a = (data.Answer || []).find(x => x.type === 1);
+                    if (!a) throw new Error('no A record');
+                    tplAPin.value = a.data;
+                    btnTplResolve.disabled = false;
+                    tplSetHint(host + ' → ' + a.data, false);
+                })
+                .catch(() => tryNext(i + 1));
+        };
+        tryNext(0);
+    });
+
+    tplInput.addEventListener('input', onTplInput);
+    tplClear.addEventListener('click', () => {
+        tplInput.value = '';
+        tplAPin.value = '';
+        onTplInput();
+        tplInput.focus();
+    });
+    btnCopyTpl.addEventListener('click', () => copyTextWithFeedback(btnCopyTpl, tplOutputText, tplHint));
+    btnDownloadTpl.addEventListener('click', () => {
+        if (tplOutputText) downloadText('template-config.json', tplOutputText, 'application/json;charset=utf-8');
+    });
 })();
