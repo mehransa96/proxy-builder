@@ -586,6 +586,23 @@ function parseProxyURL(raw) {
     return parsedList[0] || { error: 'Unknown protocol. Supported: vless, vmess, trojan, ss, socks (socks5 only), http' };
 }
 
+// xhttp was named splithttp before Xray v24.9; links use either name.
+function isXhttpNetwork(net) {
+    return net === 'xhttp' || net === 'splithttp';
+}
+
+// The `extra` link param is a JSON object (headers, padding, xmux, ...).
+// Returns the parsed object, or null when absent or not a JSON object.
+function parseXhttpExtra(raw) {
+    if (!raw) return null;
+    try {
+        const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function parseVless(url) {
     try {
         const u = new URL(url);
@@ -606,6 +623,7 @@ function parseVless(url) {
             serviceName: params.serviceName || undefined,
             authority: params.authority || undefined,
             mode: params.mode || undefined,
+            extra: params.extra || undefined,
             security: params.security || 'none',
             sni: params.sni || undefined,
             fp: params.fp || 'chrome',
@@ -645,6 +663,9 @@ function parseVmess(url) {
             path: config.path || undefined,
             serviceName: config.path || undefined,
             authority: config.authority || undefined,
+            // xhttp share links put the mode in `type` (v2rayN) or `mode`
+            mode: config.mode || (isXhttpNetwork(config.net) && config.type && config.type !== 'none' ? config.type : undefined),
+            extra: config.extra ? (typeof config.extra === 'string' ? config.extra : JSON.stringify(config.extra)) : undefined,
             security: config.tls || 'none',
             sni: config.sni || undefined,
             fp: config.fp || 'chrome',
@@ -676,6 +697,7 @@ function parseTrojan(url) {
             serviceName: params.serviceName || undefined,
             authority: params.authority || undefined,
             mode: params.mode || undefined,
+            extra: params.extra || undefined,
             security: params.security || 'tls',
             sni: params.sni || undefined,
             fp: params.fp || 'chrome',
@@ -1075,7 +1097,8 @@ const ECH_PRESETS = {
 
     function buildStreamSettings(params, isChain) {
         const stream = {};
-        const netType = params.type || 'tcp';
+        // splithttp is the old name of xhttp; Xray emits xhttpSettings for both
+        const netType = isXhttpNetwork(params.type) ? 'xhttp' : (params.type || 'tcp');
 
         // Network
         stream.network = netType;
@@ -1117,6 +1140,16 @@ const ECH_PRESETS = {
                 if (params.host) stream.httpupgradeSettings.host = params.host;
                 stream.httpupgradeSettings.path = params.path || '/';
                 break;
+
+            case 'xhttp': {
+                stream.xhttpSettings = {};
+                if (params.host) stream.xhttpSettings.host = params.host;
+                stream.xhttpSettings.path = params.path || '/';
+                if (params.mode) stream.xhttpSettings.mode = params.mode;
+                const extra = parseXhttpExtra(params.extra);
+                if (extra) stream.xhttpSettings.extra = extra;
+                break;
+            }
 
             case 'tcp':
             case 'raw':
@@ -1522,6 +1555,20 @@ const ECH_PRESETS = {
                 break;
             }
 
+            case 'xhttp':
+            case 'splithttp': {
+                // Upstream sing-box has no xhttp transport; forks that add it
+                // use this shape, and upstream rejects it loudly instead of
+                // silently dialing plain TCP.
+                outbound.transport = {
+                    type: 'xhttp',
+                    path: params.path || '/'
+                };
+                if (params.host) outbound.transport.host = params.host;
+                if (params.mode) outbound.transport.mode = params.mode;
+                break;
+            }
+
             case 'tcp': {
                 if (params.headerType === 'http') {
                     outbound.transport = {
@@ -1554,6 +1601,7 @@ const ECH_PRESETS = {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         safeAtob, encodeUtf8ToB64, safeDecode, extractLines,
+        isXhttpNetwork, parseXhttpExtra,
         getEchQueryServer, ECH_DNS_DEFAULT, isBareEchDomain, normalizeEchInput,
         ECH_PRESETS, FRAGMENT_PRESETS, SUB_SCHEME,
         enhanceUrlCore, enhanceEchUrlCore,

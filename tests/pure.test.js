@@ -7,6 +7,7 @@ const pure = require('../pure.js');
 const {
     safeAtob, encodeUtf8ToB64, safeDecode, extractLines,
     getEchQueryServer, ECH_DNS_DEFAULT, isBareEchDomain, normalizeEchInput,
+    isXhttpNetwork, parseXhttpExtra,
     ECH_PRESETS, FRAGMENT_PRESETS, SUB_SCHEME,
     enhanceUrlCore, enhanceEchUrlCore,
     looksLikeJsonConfig, parseFullConfigJson, summarizeFullConfig, enhanceFullConfigCore,
@@ -1632,5 +1633,99 @@ describe('full Xray JSON config (Fragment tab)', () => {
     it('reports an invalid Final Mask instead of writing it', () => {
         assert.match(enhanceFullConfigCore(FIXTURE, { ...OPTS, fm: '{not json' }).error, /Final Mask/);
         assert.match(enhanceFullConfigCore(FIXTURE, { ...OPTS, fm: '[1]' }).error, /JSON object/);
+    });
+});
+
+describe('xhttp / splithttp transport', () => {
+    const XHTTP_LINK = 'vless://u1@x.example.com:443?type=xhttp&security=tls&sni=x.example.com'
+        + '&host=cdn.example.com&path=%2Fxh&mode=packet-up'
+        + '&extra=' + encodeURIComponent('{"xPaddingBytes":"100-1000","noGRPCHeader":false}')
+        + '#xh';
+
+    it('isXhttpNetwork accepts both names only', () => {
+        assert.equal(isXhttpNetwork('xhttp'), true);
+        assert.equal(isXhttpNetwork('splithttp'), true);
+        assert.equal(isXhttpNetwork('ws'), false);
+        assert.equal(isXhttpNetwork(undefined), false);
+    });
+
+    it('parseXhttpExtra keeps JSON objects and drops everything else', () => {
+        assert.deepEqual(parseXhttpExtra('{"a":1}'), { a: 1 });
+        assert.equal(parseXhttpExtra('not json'), null);
+        assert.equal(parseXhttpExtra('[1,2]'), null);
+        assert.equal(parseXhttpExtra('3'), null);
+        assert.equal(parseXhttpExtra(undefined), null);
+    });
+
+    it('parseVless carries mode and extra', () => {
+        const p = parseVless(XHTTP_LINK);
+        assert.equal(p.type, 'xhttp');
+        assert.equal(p.mode, 'packet-up');
+        assert.equal(p.path, '/xh');
+        assert.equal(p.host, 'cdn.example.com');
+        assert.equal(p.extra, '{"xPaddingBytes":"100-1000","noGRPCHeader":false}');
+    });
+
+    it('parseVmess reads the xhttp mode from `type`', () => {
+        const json = { v: '2', add: 'm.example.com', port: '443', id: 'u1', net: 'xhttp',
+            type: 'stream-one', host: 'm.example.com', path: '/v', tls: 'tls' };
+        const p = parseVmess('vmess://' + Buffer.from(JSON.stringify(json)).toString('base64'));
+        assert.equal(p.type, 'xhttp');
+        assert.equal(p.mode, 'stream-one');
+        assert.equal(p.path, '/v');
+    });
+
+    it('parseVmess leaves mode unset for non-xhttp header types', () => {
+        const json = { add: 'm.example.com', port: '80', id: 'u1', net: 'tcp', type: 'http' };
+        const p = parseVmess('vmess://' + Buffer.from(JSON.stringify(json)).toString('base64'));
+        assert.equal(p.mode, undefined);
+    });
+
+    it('Xray stream settings carry host, path, mode and extra', () => {
+        assert.deepEqual(buildStreamSettings(parseVless(XHTTP_LINK), false), {
+            network: 'xhttp',
+            security: 'tls',
+            sockopt: { domainStrategy: 'UseIP' },
+            xhttpSettings: {
+                host: 'cdn.example.com',
+                path: '/xh',
+                mode: 'packet-up',
+                extra: { xPaddingBytes: '100-1000', noGRPCHeader: false }
+            },
+            tlsSettings: {
+                serverName: 'x.example.com',
+                fingerprint: 'chrome',
+                alpn: ['http/1.1'],
+                allowInsecure: false
+            }
+        });
+    });
+
+    it('splithttp links become xhttp in Xray, with path defaulting to /', () => {
+        const out = buildStreamSettings({
+            protocol: 'trojan', password: 'p', server: 's.example.com', port: 443,
+            type: 'splithttp', security: 'none', extra: 'broken{'
+        }, true);
+        assert.equal(out.network, 'xhttp');
+        assert.deepEqual(out.xhttpSettings, { path: '/' });
+        assert.equal(out.splithttpSettings, undefined);
+    });
+
+    it('sing-box emits an xhttp transport instead of falling back to tcp', () => {
+        const out = buildSingboxOutbound(parseVless(XHTTP_LINK), 'proxy', null);
+        assert.deepEqual(out.transport, {
+            type: 'xhttp',
+            path: '/xh',
+            host: 'cdn.example.com',
+            mode: 'packet-up'
+        });
+    });
+
+    it('sing-box maps splithttp to the xhttp transport', () => {
+        const out = buildSingboxOutbound({
+            protocol: 'vless', uuid: 'u1', server: 's.example.com', port: 443,
+            type: 'splithttp', security: 'none'
+        }, 'chain', 'proxy');
+        assert.deepEqual(out.transport, { type: 'xhttp', path: '/' });
     });
 });
