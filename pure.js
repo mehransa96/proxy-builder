@@ -1550,6 +1550,391 @@ const ECH_PRESETS = {
         return outbound;
     }
 
+// ===== Config Fixer (full Xray JSON, stock v2rayNG / any Xray core) =====
+// Diagnoses and repairs a full Xray config. Unlike the Fragment tab (which
+// targets PattNG: fp=unsafe + cs + finalmask), the fixer defaults to what a
+// stock v2rayNG core understands: a browser uTLS fingerprint and the classic
+// freedom-outbound fragment wired in through sockopt.dialerProxy.
+const FIXER_FRAGMENT_TAG = 'fragment';
+// Starting points only — the right values depend on the network, which is
+// why the fixer can also emit one config per preset as a test pack.
+const FIXER_FRAGMENT_PRESETS = {
+    f1: { label: 'tlshello · 10-20 · 10-20', packets: 'tlshello', length: '10-20', interval: '10-20' },
+    f2: { label: 'tlshello · 100-200 · 10-20', packets: 'tlshello', length: '100-200', interval: '10-20' },
+    f3: { label: 'tlshello · 1-3 · 1-3', packets: 'tlshello', length: '1-3', interval: '1-3' },
+    f4: { label: '1-3 · 1-5 · 1-2', packets: '1-3', length: '1-5', interval: '1-2' },
+    f5: { label: '1-1 · 3-5 · 5-10', packets: '1-1', length: '3-5', interval: '5-10' }
+};
+const FIXER_FINGERPRINTS = ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', 'random', 'randomized', 'unsafe'];
+
+function isIpAddress(host) {
+    const h = String(host || '').replace(/^\[|\]$/g, '');
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(':');
+}
+
+// Does an Xray DNS "domains" rule list (domain:/full:/keyword/regexp) match
+// the host? geosite:/ext: entries cannot be evaluated here and return null.
+function dnsDomainsMatch(domains, host) {
+    let unknown = false;
+    for (const d of domains || []) {
+        const s = String(d);
+        if (s.startsWith('domain:')) {
+            const v = s.slice(7);
+            if (host === v || host.endsWith('.' + v)) return true;
+        } else if (s.startsWith('full:')) {
+            if (host === s.slice(5)) return true;
+        } else if (s.startsWith('regexp:')) {
+            try { if (new RegExp(s.slice(7)).test(host)) return true; } catch { }
+        } else if (s.startsWith('geosite:') || s.startsWith('ext:')) {
+            unknown = true;
+        } else if (s.startsWith('keyword:')) {
+            if (host.includes(s.slice(8))) return true;
+        } else if (s && host.includes(s)) {
+            return true;
+        }
+    }
+    return unknown ? null : false;
+}
+
+// Which outbound a DNS query from a given inbound tag / to a given address
+// takes: the first rule matching the tag or the literal IP, otherwise the
+// default (first) outbound. geoip:/geosite: rules cannot be evaluated here.
+function routeForDnsQuery(cfg, tag, address) {
+    const rules = (cfg.routing && Array.isArray(cfg.routing.rules)) ? cfg.routing.rules : [];
+    const ip = String(address || '').replace(/^\w+:\/\//, '').replace(/:\d+$/, '');
+    for (const r of rules) {
+        if (!r) continue;
+        if (tag && Array.isArray(r.inboundTag) && r.inboundTag.includes(tag)) return r.outboundTag || '';
+        if (ip && Array.isArray(r.ip) && r.ip.includes(ip)) return r.outboundTag || '';
+    }
+    const first = cfg.outbounds.find(o => o);
+    return first ? (first.tag || '') : '';
+}
+
+// How the proxy server's own domain gets resolved when sockopt asks the core
+// to resolve it (UseIP*). A DNS server with its own tag is routed by that
+// tag, not by the module tag. Returns { via, direct }.
+function serverDnsPath(cfg, host) {
+    const dns = cfg.dns || {};
+    if (dns.hosts && Object.prototype.hasOwnProperty.call(dns.hosts, host)) return { via: 'dns.hosts', direct: true };
+    const servers = Array.isArray(dns.servers) ? dns.servers : [];
+    const moduleTag = dns.tag || '';
+    const proxyTags = fullConfigProxyOutbounds(cfg).map(o => o.tag || '');
+    const path = (addr, tag) => {
+        if (/^(localhost|fakedns)$/i.test(addr)) return { via: addr, direct: true };
+        return { via: addr, direct: !proxyTags.includes(routeForDnsQuery(cfg, tag, addr)) };
+    };
+    for (const s of servers) {
+        if (s && typeof s === 'object' && Array.isArray(s.domains) && dnsDomainsMatch(s.domains, host) === true) {
+            return path(String(s.address || ''), s.tag || moduleTag);
+        }
+    }
+    const first = servers.find(s => typeof s === 'string' || (s && !Array.isArray(s.domains)));
+    if (!first) return { via: 'system DNS', direct: true };
+    if (typeof first === 'string') return path(first, moduleTag);
+    return path(String(first.address || ''), first.tag || moduleTag);
+}
+
+function outboundHasClassicFragment(cfg, ob) {
+    const ss = ob.streamSettings || {};
+    const dp = ss.sockopt && ss.sockopt.dialerProxy;
+    if (!dp) return false;
+    const target = cfg.outbounds.find(o => o && o.tag === dp);
+    return !!(target && target.protocol === 'freedom' && target.settings && target.settings.fragment);
+}
+
+function diagnoseFullConfig(raw) {
+    const parsed = parseFullConfigJson(raw);
+    if (parsed.error) return parsed;
+    const items = [];
+    const add = (level, code, msg) => items.push({ level, code, msg });
+    parsed.configs.forEach((cfg, ci) => {
+        const prefix = parsed.configs.length > 1 ? '#' + (ci + 1) + ' ' : '';
+        const proxies = fullConfigProxyOutbounds(cfg);
+        if (proxies.length === 0) {
+            add('error', 'no-proxy', prefix + 'No VLESS / VMess / Trojan outbound found.');
+            return;
+        }
+        proxies.forEach(ob => {
+            const name = prefix + (ob.tag ? '"' + ob.tag + '"' : String(ob.protocol));
+            const ss = ob.streamSettings || {};
+            const security = ss.security || 'none';
+            const network = ss.network || 'tcp';
+            const sec = security === 'tls' ? (ss.tlsSettings || {}) : security === 'reality' ? (ss.realitySettings || {}) : null;
+            const { server } = fullConfigOutboundServer(ob);
+            const host = String(server || '');
+            if (!sec) {
+                add('warn', 'no-tls', name + ': no TLS — fragment and fingerprint have no effect; the connection is plain to DPI.');
+            } else {
+                const fp = sec.fingerprint || '';
+                if (fp === 'unsafe') {
+                    add('error', 'fp-unsafe', name + ': fingerprint "unsafe" sends Go\'s own TLS ClientHello instead of a browser one. It is meant for PattNG with custom cipher suites; on stock v2rayNG it is easy for DPI to spot. Use chrome.');
+                } else if (!fp) {
+                    add('info', 'fp-empty', name + ': no fingerprint set (the core defaults to chrome).');
+                } else {
+                    add('ok', 'fp', name + ': fingerprint ' + fp + '.');
+                }
+                if (security === 'tls' && !sec.serverName && isIpAddress(host)) {
+                    add('error', 'no-sni', name + ': address is an IP but tlsSettings.serverName (SNI) is empty — the TLS handshake will fail on a CDN.');
+                }
+                if (sec.allowInsecure) {
+                    add('warn', 'insecure', name + ': allowInsecure is on — certificate is not verified.');
+                }
+                const alpn = Array.isArray(sec.alpn) ? sec.alpn : [];
+                if ((network === 'ws' || network === 'httpupgrade') && alpn.includes('h2')) {
+                    add('error', 'alpn-h2', name + ': ALPN includes h2 but ' + network + ' only works over http/1.1 — set ALPN to http/1.1.');
+                }
+                if (sec.cipherSuites && fp && fp !== 'unsafe') {
+                    add('info', 'cs-ignored', name + ': cipherSuites is ignored while a uTLS fingerprint (' + fp + ') is set.');
+                }
+            }
+            const hasClassic = outboundHasClassicFragment(cfg, ob);
+            const dp = ss.sockopt && ss.sockopt.dialerProxy;
+            if (dp && !cfg.outbounds.some(o => o && o.tag === dp)) {
+                add('error', 'dialer-missing', name + ': sockopt.dialerProxy points to "' + dp + '", but no outbound has that tag.');
+            }
+            if (ss.finalmask) {
+                add('warn', 'finalmask', name + ': uses streamSettings.finalmask, which only Xray-core 26+ understands (PattNG, recent builds). Older cores ignore it silently, so no fragmentation happens. The classic fragment works on every core.');
+            }
+            if (sec && !hasClassic && !ss.finalmask) {
+                add('warn', 'no-fragment', name + ': no TLS fragmentation — the SNI leaves in one packet, which filtered mobile networks (e.g. MCI) often block.');
+            } else if (hasClassic) {
+                add('ok', 'fragment', name + ': classic fragment via dialerProxy "' + dp + '".');
+            }
+            const ds = ss.sockopt && ss.sockopt.domainStrategy;
+            if (host && !isIpAddress(host) && ds && /^Use/i.test(ds)) {
+                const p = serverDnsPath(cfg, host);
+                if (p && !p.direct) {
+                    add('warn', 'dns-loop', name + ': the server domain ' + host + ' is resolved by ' + p.via + ', and that DNS traffic is routed through the proxy itself — a possible loop that can stop it from connecting. Enable "Resolve server domain directly".');
+                } else if (p) {
+                    add('ok', 'dns', name + ': server domain resolved directly via ' + p.via + '.');
+                }
+            }
+            if (ob.mux && ob.mux.enabled && ob.settings && Array.isArray(ob.settings.vnext)
+                && ob.settings.vnext.some(v => (v.users || []).some(u => u && u.flow))) {
+                add('error', 'mux-flow', name + ': mux cannot be used together with flow (XTLS Vision).');
+            }
+        });
+    });
+    return { items };
+}
+
+function ensureServerDnsDirect(cfg, host) {
+    const p = serverDnsPath(cfg, host);
+    if (!p || p.direct) return false;
+    cfg.dns = cfg.dns || {};
+    cfg.dns.servers = Array.isArray(cfg.dns.servers) ? cfg.dns.servers : [];
+    const tag = 'server-dns';
+    cfg.dns.servers.unshift({ address: '8.8.8.8', domains: ['full:' + host], skipFallback: true, tag });
+    cfg.routing = cfg.routing || {};
+    cfg.routing.rules = Array.isArray(cfg.routing.rules) ? cfg.routing.rules : [];
+    const directTag = (cfg.outbounds.find(o => o && o.protocol === 'freedom' && o.tag !== FIXER_FRAGMENT_TAG) || {}).tag;
+    if (!directTag) {
+        cfg.outbounds.push({ protocol: 'freedom', settings: {}, tag: 'direct' });
+    }
+    cfg.routing.rules.unshift({ type: 'field', inboundTag: [tag], outboundTag: directTag || 'direct' });
+    return true;
+}
+
+// opts: {
+//   fp: 'keep' | fingerprint,
+//   fragmentMode: 'classic' | 'finalmask' | 'none' | 'keep',
+//   fragment: { packets, length, interval },   // classic mode
+//   finalmask: JSON string,                     // finalmask mode
+//   alpnFix: bool,            // force http/1.1 on ws/httpupgrade when h2 is listed
+//   address: string,          // clean IP / host override (single proxy only)
+//   dnsFix: bool,             // resolve the server domain outside the proxy
+//   remarks: string           // replaces remarks when non-empty
+// }
+function fixFullConfigCore(raw, opts) {
+    const parsed = parseFullConfigJson(raw);
+    if (parsed.error) return parsed;
+    const o = opts || {};
+    const mode = o.fragmentMode || 'classic';
+    let fm = null;
+    if (mode === 'finalmask') {
+        try {
+            fm = JSON.parse(String(o.finalmask || ''));
+        } catch (e) {
+            return { error: 'Final Mask (fm) is not valid JSON: ' + e.message };
+        }
+        if (!fm || typeof fm !== 'object' || Array.isArray(fm)) {
+            return { error: 'Final Mask (fm) must be a JSON object, e.g. {"tcp": [...]}' };
+        }
+    }
+    const frag = o.fragment || {};
+    if (mode === 'classic' && !String(frag.packets || '').trim()) {
+        return { error: 'Fragment "packets" is empty — use tlshello or a range like 1-3' };
+    }
+    let targets = 0;
+    parsed.configs.forEach(cfg => { targets += fullConfigProxyOutbounds(cfg).length; });
+    if (targets === 0) return { error: 'No VLESS / VMess / Trojan outbound found in the config' };
+    const address = targets === 1 ? String(o.address || '').trim() : '';
+    const changes = [];
+    const note = c => { if (!changes.includes(c)) changes.push(c); };
+
+    parsed.configs.forEach(cfg => {
+        const proxies = fullConfigProxyOutbounds(cfg);
+        let usesClassic = false;
+        proxies.forEach(ob => {
+            const ss = ob.streamSettings || (ob.streamSettings = {});
+            const security = ss.security || 'none';
+            const network = ss.network || 'tcp';
+            const secKey = security === 'tls' ? 'tlsSettings' : security === 'reality' ? 'realitySettings' : '';
+            const s = ob.settings || (ob.settings = {});
+            const entry = (Array.isArray(s.vnext) && s.vnext[0]) || (Array.isArray(s.servers) && s.servers[0]);
+            const oldHost = entry ? String(entry.address || '') : '';
+
+            if (secKey && o.fp && o.fp !== 'keep') {
+                const sec = ss[secKey] || (ss[secKey] = {});
+                if (sec.fingerprint !== o.fp) { sec.fingerprint = o.fp; note('fingerprint → ' + o.fp); }
+                if (o.fp !== 'unsafe' && sec.cipherSuites) { delete sec.cipherSuites; note('removed cipherSuites (ignored with a uTLS fingerprint)'); }
+            }
+            if (secKey === 'tlsSettings' && o.alpnFix && (network === 'ws' || network === 'httpupgrade')) {
+                const tls = ss.tlsSettings;
+                if (Array.isArray(tls.alpn) && tls.alpn.includes('h2')) { tls.alpn = ['http/1.1']; note('ALPN → http/1.1'); }
+            }
+            if (address && entry && address !== oldHost) {
+                // Keep SNI and Host pointing at the original domain so a CDN
+                // still routes the request when the address becomes an IP.
+                if (secKey === 'tlsSettings' && oldHost && !isIpAddress(oldHost)) {
+                    const tls = ss.tlsSettings;
+                    if (!tls.serverName) tls.serverName = oldHost;
+                }
+                if (network === 'ws' && oldHost && !isIpAddress(oldHost)) {
+                    const ws = ss.wsSettings || (ss.wsSettings = {});
+                    const hasHost = ws.host || (ws.headers && (ws.headers.Host || ws.headers.host));
+                    if (!hasHost) ws.host = oldHost;
+                }
+                if (network === 'httpupgrade' && oldHost && !isIpAddress(oldHost)) {
+                    const hu = ss.httpupgradeSettings || (ss.httpupgradeSettings = {});
+                    if (!hu.host) hu.host = oldHost;
+                }
+                entry.address = address;
+                note('server address → ' + address + ' (SNI / Host kept)');
+            }
+
+            if (mode === 'classic' && secKey) {
+                if (ss.finalmask) { delete ss.finalmask; note('removed finalmask'); }
+                ss.sockopt = ss.sockopt || {};
+                ss.sockopt.dialerProxy = FIXER_FRAGMENT_TAG;
+                usesClassic = true;
+            } else if (mode === 'finalmask' && secKey === 'tlsSettings') {
+                ss.finalmask = JSON.parse(JSON.stringify(fm));
+                if (ss.sockopt && ss.sockopt.dialerProxy === FIXER_FRAGMENT_TAG) delete ss.sockopt.dialerProxy;
+                note('finalmask fragment set');
+            } else if (mode === 'none') {
+                if (ss.finalmask) { delete ss.finalmask; note('removed finalmask'); }
+                if (ss.sockopt && ss.sockopt.dialerProxy === FIXER_FRAGMENT_TAG) { delete ss.sockopt.dialerProxy; note('removed fragment'); }
+            }
+
+            const host = entry ? String(entry.address || '') : '';
+            const ds = ss.sockopt && ss.sockopt.domainStrategy;
+            if (o.dnsFix && host && !isIpAddress(host) && ds && /^Use/i.test(ds)) {
+                if (ensureServerDnsDirect(cfg, host)) note('server domain now resolved directly (no DNS loop)');
+            }
+        });
+
+        // The fragment outbound: (re)written when used, dropped when not.
+        const idx = cfg.outbounds.findIndex(x => x && x.tag === FIXER_FRAGMENT_TAG);
+        if (usesClassic) {
+            const fragOb = {
+                protocol: 'freedom',
+                settings: {
+                    domainStrategy: 'AsIs',
+                    fragment: {
+                        packets: String(frag.packets).trim(),
+                        length: String(frag.length || '').trim(),
+                        interval: String(frag.interval || '').trim()
+                    }
+                },
+                streamSettings: { sockopt: { tcpNoDelay: true } },
+                tag: FIXER_FRAGMENT_TAG
+            };
+            if (idx >= 0) cfg.outbounds[idx] = fragOb; else cfg.outbounds.push(fragOb);
+            note('classic fragment ' + fragOb.settings.fragment.packets + ' / ' + fragOb.settings.fragment.length + ' / ' + fragOb.settings.fragment.interval + ' via dialerProxy');
+        } else if (idx >= 0 && mode !== 'keep') {
+            const stillUsed = cfg.outbounds.some(x => x && x.streamSettings && x.streamSettings.sockopt && x.streamSettings.sockopt.dialerProxy === FIXER_FRAGMENT_TAG);
+            if (!stillUsed) cfg.outbounds.splice(idx, 1);
+        }
+        if (o.remarks && String(o.remarks).trim()) cfg.remarks = String(o.remarks).trim();
+    });
+
+    const out = parsed.isArray ? parsed.configs : parsed.configs[0];
+    return { json: JSON.stringify(out, null, 2), config: out, changes };
+}
+
+// One config per fragment preset (plus a no-fragment control), each with its
+// own remarks, so the working settings can be found by testing on the phone.
+function buildFixTestPack(raw, opts, presetKeys) {
+    const base = parseFullConfigJson(raw);
+    if (base.error) return base;
+    if (base.isArray) return { error: 'The test pack needs a single config, not an array' };
+    const baseRemarks = (opts && opts.remarks) || base.configs[0].remarks || 'config';
+    const keys = (presetKeys && presetKeys.length) ? presetKeys : Object.keys(FIXER_FRAGMENT_PRESETS);
+    const list = [];
+    for (const k of keys) {
+        const p = FIXER_FRAGMENT_PRESETS[k];
+        if (!p) continue;
+        const r = fixFullConfigCore(raw, Object.assign({}, opts, {
+            fragmentMode: 'classic',
+            fragment: p,
+            remarks: baseRemarks + ' | ' + p.label
+        }));
+        if (r.error) return r;
+        list.push(r.config);
+    }
+    const ctl = fixFullConfigCore(raw, Object.assign({}, opts, { fragmentMode: 'none', remarks: baseRemarks + ' | no fragment' }));
+    if (ctl.error) return ctl;
+    list.push(ctl.config);
+    return { json: JSON.stringify(list, null, 2), configs: list };
+}
+
+// A share link (vless / vmess / trojan) → a full config in the shape
+// v2rayNG exports, so it can go through the same fixer.
+function linkToFullConfig(link) {
+    const p = parseProxyURLSingle(String(link || '').trim());
+    if (!p || p.error) return { error: (p && p.error) || 'Not a proxy link' };
+    if (!FULL_CONFIG_PROTOCOLS.includes(p.protocol)) return { error: 'Only VLESS / VMess / Trojan links can be turned into a full config' };
+    const proxy = buildProxyOutbound(p);
+    proxy.streamSettings = proxy.streamSettings || {};
+    proxy.streamSettings.sockopt = { domainStrategy: 'UseIPv4' };
+    const cfg = {
+        dns: {
+            servers: [
+                '1.1.1.1',
+                { address: '223.5.5.5', domains: ['geosite:private', 'domain:ir', 'geosite:category-ir'], skipFallback: true, tag: 'domestic-dns0' }
+            ],
+            tag: 'dns-module'
+        },
+        inbounds: [{
+            listen: '127.0.0.1', port: 10808, protocol: 'socks',
+            settings: { auth: 'noauth', udp: true, userLevel: 8 },
+            sniffing: { destOverride: ['http', 'tls'], enabled: true, routeOnly: true },
+            tag: 'socks'
+        }],
+        log: { loglevel: 'warning' },
+        outbounds: [
+            proxy,
+            { protocol: 'freedom', settings: { domainStrategy: 'UseIPv4' }, tag: 'direct' },
+            { protocol: 'blackhole', settings: { response: { type: 'http' } }, tag: 'block' }
+        ],
+        remarks: p.remark || (p.protocol.toUpperCase() + ' ' + p.server),
+        routing: {
+            domainStrategy: 'IPIfNonMatch',
+            rules: [
+                { network: 'udp', outboundTag: 'block', port: '443', type: 'field' },
+                { domain: ['geosite:private'], outboundTag: 'direct', type: 'field' },
+                { domain: ['domain:ir', 'geosite:category-ir'], outboundTag: 'direct', type: 'field' },
+                { ip: ['geoip:private', 'geoip:ir'], outboundTag: 'direct', type: 'field' },
+                { inboundTag: ['domestic-dns0'], outboundTag: 'direct', type: 'field' },
+                { inboundTag: ['dns-module'], outboundTag: 'proxy', type: 'field' }
+            ]
+        }
+    };
+    return { json: JSON.stringify(cfg, null, 2), config: cfg };
+}
+
 // Node test harness: browsers ignore this block (`module` is undefined there).
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -1558,6 +1943,8 @@ if (typeof module !== 'undefined' && module.exports) {
         ECH_PRESETS, FRAGMENT_PRESETS, SUB_SCHEME,
         enhanceUrlCore, enhanceEchUrlCore,
         looksLikeJsonConfig, parseFullConfigJson, summarizeFullConfig, enhanceFullConfigCore,
+        FIXER_FRAGMENT_PRESETS, FIXER_FINGERPRINTS, FIXER_FRAGMENT_TAG, isIpAddress, dnsDomainsMatch,
+        diagnoseFullConfig, fixFullConfigCore, buildFixTestPack, linkToFullConfig,
         parseProxyURLSingle, parseProxyURL, parseVless, parseVmess, parseTrojan, parseShadowsocks, parseSocks, parseHttp,
         buildStreamSettings, buildProxyOutbound, buildChainOutbound, buildSingboxOutbound,
         maskString, truncateStr,
