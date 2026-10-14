@@ -1289,3 +1289,16 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: rgba(124, 92, 255, 0.5);
 }
+/* ===== Config Fixer ===== */
+.fixer-diag-error .info-value { color: var(--danger); }
+.fixer-diag-warn .info-value { color: var(--warning); }
+.fixer-diag-ok .info-value { color: var(--success); }
+.fixer-diag-info .info-value { color: var(--text-secondary); }
+#fixer-diag .info-value { font-family: var(--font-sans); font-size: 0.8rem; word-break: normal; overflow-wrap: anywhere; }
+#fixer-diag .info-label { min-width: 28px; }
+.fixer-frag-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.fixer-frag-fields input { min-width: 0; }
+.fixer-checks label { display: flex; gap: 8px; align-items: center; font-size: 0.82rem; cursor: pointer; }
+.fixer-checks input[type="checkbox"] { width: auto; }
+.btn-generate-alt { margin-left: 10px; background: linear-gradient(135deg, #3cd4f0, #4cdf86); }
+@media (max-width: 600px) { .btn-generate-alt { margin-left: 0; margin-top: 10px; } }

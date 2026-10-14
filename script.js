@@ -67,6 +67,7 @@
     const viewChain = document.getElementById('view-chain');
     const viewEnhancer = document.getElementById('view-enhancer');
     const viewEch = document.getElementById('view-ech');
+    const viewFixer = document.getElementById('view-fixer');
 
     // Enhancer elements
     const enhancerInput = document.getElementById('enhancer-input');
@@ -1892,8 +1893,10 @@
         viewChain.style.display = viewName === 'chain' ? '' : 'none';
         viewEnhancer.style.display = viewName === 'enhancer' ? '' : 'none';
         viewEch.style.display = viewName === 'ech' ? '' : 'none';
+        viewFixer.style.display = viewName === 'fixer' ? '' : 'none';
         document.querySelectorAll('.protocol-badges .badge').forEach(badge => {
-            const show = viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol);
+            const show = viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
+                || (viewName === 'fixer' && badge.dataset.protocol === 'vmess');
             badge.style.display = show ? '' : 'none';
         });
     }
@@ -1915,8 +1918,8 @@
         }
     }
 
-    // Apply badge visibility for the initial view (ech is active by default)
-    switchMainTab('ech');
+    // Apply badge visibility for the initial view (fixer is active by default)
+    switchMainTab('fixer');
 
 
     function switchSubTab(subTabName) {
@@ -2207,4 +2210,173 @@
     // always agree (URL mode shows blank-line separation, sub mode single).
     // ECH downloads / sub-card drag / option-watch wiring removed (026): owned
     // by the echTab instance (filenames + watched controls unchanged).
+    // ===== Config Fixer tab =====
+    // Diagnose + repair a full Xray JSON (or a share link turned into one).
+    // All config logic lives in pure.js (diagnoseFullConfig / fixFullConfigCore
+    // / buildFixTestPack / linkToFullConfig); this only wires the DOM.
+    const fixerInput = document.getElementById('fixer-input');
+    const fixerClear = document.getElementById('fixer-clear');
+    const fixerDiag = document.getElementById('fixer-diag');
+    const fixerTag = document.getElementById('fixer-protocol-tag');
+    const fixerFp = document.getElementById('fixer-fp');
+    const fixerFragMode = document.getElementById('fixer-frag-mode');
+    const fixerFragPreset = document.getElementById('fixer-frag-preset');
+    const fixerPackets = document.getElementById('fixer-frag-packets');
+    const fixerLength = document.getElementById('fixer-frag-length');
+    const fixerInterval = document.getElementById('fixer-frag-interval');
+    const fixerFm = document.getElementById('fixer-fm');
+    const fixerClassicWrap = document.getElementById('fixer-classic-wrap');
+    const fixerFmWrap = document.getElementById('fixer-fm-wrap');
+    const fixerAddress = document.getElementById('fixer-address');
+    const fixerRemarks = document.getElementById('fixer-remarks');
+    const fixerDns = document.getElementById('fixer-dns');
+    const fixerAlpn = document.getElementById('fixer-alpn');
+    const btnFix = document.getElementById('btn-fix');
+    const btnFixPack = document.getElementById('btn-fix-pack');
+    const fixerHint = document.getElementById('fixer-hint');
+    const fixerOutSection = document.getElementById('fixer-output-section');
+    const fixerOutTitle = document.getElementById('fixer-output-title');
+    const fixerOutRemark = document.getElementById('fixer-output-remark');
+    const fixerOut = document.getElementById('fixer-output');
+    const btnCopyFixer = document.getElementById('btn-copy-fixer');
+    const btnDownloadFixer = document.getElementById('btn-download-fixer');
+    const FIXER_HINT = 'Paste a full JSON config or a link above to enable';
+    const DIAG_ICON = { error: '⛔', warn: '⚠️', info: 'ℹ️', ok: '✅' };
+    let fixerSourceJson = '';
+    let fixerOutputText = '';
+    let fixerOutputName = 'fixed-config.json';
+
+    function fixerResetOutput() {
+        fixerOutSection.style.display = 'none';
+        fixerOutputText = '';
+        fixerHint.textContent = FIXER_HINT;
+        fixerHint.style.color = '';
+    }
+
+    function fixerSetHint(text, isError) {
+        fixerHint.textContent = text;
+        fixerHint.style.color = isError ? 'var(--danger)' : '';
+    }
+
+    function renderFixerDiag(items) {
+        fixerDiag.innerHTML = items.map(it =>
+            '<div class="info-row fixer-diag-' + it.level + '"><span class="info-label">' + DIAG_ICON[it.level] +
+            '</span><span class="info-value">' + escapeHtml(it.msg) + '</span></div>').join('');
+    }
+
+    function onFixerInput() {
+        fixerResetOutput();
+        const val = fixerInput.value.trim();
+        fixerSourceJson = '';
+        btnFix.disabled = true;
+        btnFixPack.disabled = true;
+        if (!val) {
+            fixerDiag.innerHTML = '';
+            fixerTag.textContent = '—';
+            return;
+        }
+        let raw = val;
+        let fromLink = false;
+        if (!looksLikeJsonConfig(val)) {
+            const conv = linkToFullConfig(val.split(/\r?\n/)[0]);
+            if (conv.error) {
+                fixerTag.textContent = '—';
+                fixerDiag.innerHTML = '<div class="error-msg">❌ ' + escapeHtml(conv.error) + '</div>';
+                return;
+            }
+            raw = conv.json;
+            fromLink = true;
+        }
+        const summary = summarizeFullConfig(raw);
+        if (summary.error) {
+            fixerTag.textContent = '—';
+            fixerDiag.innerHTML = '<div class="error-msg">❌ ' + escapeHtml(summary.error) + '</div>';
+            return;
+        }
+        const diag = diagnoseFullConfig(raw);
+        fixerSourceJson = raw;
+        fixerTag.textContent = fromLink ? 'LINK → JSON' : 'JSON';
+        const first = summary.outbounds[0];
+        if (!fixerRemarks.value && first.remarks) fixerRemarks.placeholder = first.remarks;
+        const head = '<div class="info-row"><span class="info-label">Server</span><span class="info-value">' +
+            escapeHtml(first.protocol + ' · ' + first.server + ':' + first.port + ' · ' + first.network + ' · ' + first.security) +
+            '</span></div>';
+        renderFixerDiag(diag.items);
+        fixerDiag.insertAdjacentHTML('afterbegin', head);
+        btnFix.disabled = false;
+        btnFixPack.disabled = summary.isArray;
+        const problems = diag.items.filter(i => i.level === 'error' || i.level === 'warn').length;
+        fixerSetHint(problems ? problems + ' problem(s) found — press Fix Config' : 'No problems found — you can still re-tune it', false);
+    }
+
+    function fixerOptions() {
+        return {
+            fp: fixerFp.value,
+            fragmentMode: fixerFragMode.value,
+            fragment: { packets: fixerPackets.value, length: fixerLength.value, interval: fixerInterval.value },
+            finalmask: fixerFm.value,
+            address: fixerAddress.value,
+            dnsFix: fixerDns.checked,
+            alpnFix: fixerAlpn.checked,
+            remarks: fixerRemarks.value
+        };
+    }
+
+    function showFixerOutput(title, remark, text, name) {
+        fixerOutputText = text;
+        fixerOutputName = name;
+        fixerOutTitle.textContent = title;
+        fixerOutRemark.textContent = remark;
+        fixerOut.innerHTML = highlightJSON(JSON.parse(text));
+        fixerOutSection.style.display = '';
+        btnCopyFixer.innerHTML = '<span class="copy-icon">📋</span> Copy';
+    }
+
+    btnFix.addEventListener('click', () => {
+        if (!fixerSourceJson) return;
+        const r = fixFullConfigCore(fixerSourceJson, fixerOptions());
+        if (r.error) { fixerSetHint('❌ ' + r.error, true); return; }
+        const after = diagnoseFullConfig(r.json).items.filter(i => i.level === 'error' || i.level === 'warn');
+        showFixerOutput('📋 Fixed Config',
+            (r.changes.length ? 'Changed: ' + r.changes.join(' · ') : 'Nothing needed changing') +
+            (after.length ? ' — still open: ' + after.map(i => i.code).join(', ') : ''),
+            r.json, 'fixed-config.json');
+        fixerSetHint('Copy it, then in v2rayNG: + → Import config from clipboard', false);
+    });
+
+    btnFixPack.addEventListener('click', () => {
+        if (!fixerSourceJson) return;
+        const opts = fixerOptions();
+        if (opts.fragmentMode === 'finalmask') opts.fp = opts.fp === 'unsafe' ? 'chrome' : opts.fp;
+        const r = buildFixTestPack(fixerSourceJson, opts);
+        if (r.error) { fixerSetHint('❌ ' + r.error, true); return; }
+        showFixerOutput('🧪 Test Pack (' + r.configs.length + ' configs)',
+            r.configs.map(c => c.remarks).join(' · '), r.json, 'test-pack.json');
+        fixerSetHint('Import all, run the real-delay test, keep the one that connects', false);
+    });
+
+    function syncFixerMode() {
+        fixerClassicWrap.style.display = fixerFragMode.value === 'classic' ? '' : 'none';
+        fixerFmWrap.style.display = fixerFragMode.value === 'finalmask' ? '' : 'none';
+    }
+    fixerFragMode.addEventListener('change', () => { syncFixerMode(); fixerResetOutput(); });
+    fixerFragPreset.addEventListener('change', () => {
+        const p = FIXER_FRAGMENT_PRESETS[fixerFragPreset.value];
+        if (!p) return;
+        fixerPackets.value = p.packets;
+        fixerLength.value = p.length;
+        fixerInterval.value = p.interval;
+    });
+    fixerInput.addEventListener('input', onFixerInput);
+    fixerClear.addEventListener('click', () => {
+        fixerInput.value = '';
+        fixerRemarks.placeholder = 'Config name';
+        onFixerInput();
+        fixerInput.focus();
+    });
+    btnCopyFixer.addEventListener('click', () => copyTextWithFeedback(btnCopyFixer, fixerOutputText, fixerHint));
+    btnDownloadFixer.addEventListener('click', () => {
+        if (fixerOutputText) downloadText(fixerOutputName, fixerOutputText, 'application/json;charset=utf-8');
+    });
+    syncFixerMode();
 })();
