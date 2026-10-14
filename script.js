@@ -69,6 +69,7 @@
     const viewEch = document.getElementById('view-ech');
     const viewFixer = document.getElementById('view-fixer');
     const viewTemplates = document.getElementById('view-templates');
+    const viewVcf = document.getElementById('view-vcf');
 
     // Enhancer elements
     const enhancerInput = document.getElementById('enhancer-input');
@@ -1896,9 +1897,10 @@
         viewEch.style.display = viewName === 'ech' ? '' : 'none';
         viewFixer.style.display = viewName === 'fixer' ? '' : 'none';
         viewTemplates.style.display = viewName === 'templates' ? '' : 'none';
+        viewVcf.style.display = viewName === 'vcf' ? '' : 'none';
         document.querySelectorAll('.protocol-badges .badge').forEach(badge => {
             const show = viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
-                || ((viewName === 'fixer' || viewName === 'templates') && badge.dataset.protocol === 'vmess');
+                || (['fixer', 'templates', 'vcf'].includes(viewName) && badge.dataset.protocol === 'vmess');
             badge.style.display = show ? '' : 'none';
         });
     }
@@ -1920,8 +1922,8 @@
         }
     }
 
-    // Apply badge visibility for the initial view (templates is active by default)
-    switchMainTab('templates');
+    // Apply badge visibility for the initial view (the v8 fixer is active by default)
+    switchMainTab('vcf');
 
 
     function switchSubTab(subTabName) {
@@ -2548,4 +2550,231 @@
     btnDownloadTpl.addEventListener('click', () => {
         if (tplOutputText) downloadText('template-config.json', tplOutputText, 'application/json;charset=utf-8');
     });
+
+    // ===== VPN Config Fixer v8 tab =====
+    const vcfInput = document.getElementById('vcf-input');
+    const vcfClear = document.getElementById('vcf-clear');
+    const vcfFile = document.getElementById('vcf-file');
+    const vcfFilename = document.getElementById('vcf-filename');
+    const vcfSampleBtn = document.getElementById('vcf-sample');
+    const vcfMode = document.getElementById('vcf-mode');
+    const vcfFragment = document.getElementById('vcf-fragment');
+    const vcfCleanIps = document.getElementById('vcf-cleanips');
+    const vcfServers = document.getElementById('vcf-servers');
+    const vcfSnis = document.getElementById('vcf-snis');
+    const vcfAlpn = document.getElementById('vcf-alpn');
+    const vcfPolicy = document.getElementById('vcf-policy');
+    const vcfRemarks = document.getElementById('vcf-remarks');
+    const vcfDns = document.getElementById('vcf-dns');
+    const vcfTemplate = document.getElementById('vcf-template');
+    const vcfDropQuic = document.getElementById('vcf-dropquic');
+    const btnVcf = document.getElementById('btn-vcf');
+    const vcfHint = document.getElementById('vcf-hint');
+    const vcfOutSection = document.getElementById('vcf-output-section');
+    const vcfScores = document.getElementById('vcf-scores');
+    const vcfLog = document.getElementById('vcf-log');
+    const vcfOut = document.getElementById('vcf-output');
+    const vcfOutRemark = document.getElementById('vcf-output-remark');
+    const btnCopyVcf = document.getElementById('btn-copy-vcf');
+    const btnDownloadVcf = document.getElementById('btn-download-vcf');
+    const btnPackVcf = document.getElementById('btn-pack-vcf');
+    const vcfHistory = document.getElementById('vcf-history');
+    const VCF_HINT = 'کانفیگ یا لینک را بالا بچسبانید';
+    const VCF_STORE_OPTS = 'vcf8.opts.v1';
+    const VCF_STORE_HISTORY = 'vcf8.history.v1';
+    let vcfResult = null;
+    let vcfOutputText = '';
+
+    // Placeholder values only (example.com / documentation IPs / zero UUID).
+    const VCF_SAMPLE = {
+        dns: { hosts: { 'cdn.example.com': ['203.0.113.10', '2001:db8::10'], 'dns.google': ['8.8.8.8', '8.8.4.4'] } },
+        inbounds: [{ listen: '127.0.0.1', port: 10808, protocol: 'socks', settings: { auth: 'noauth', udp: true, userLevel: 8 },
+            sniffing: { destOverride: ['http', 'tls', 'quic', 'fakedns'], enabled: true, routeOnly: true }, tag: 'socks' }],
+        log: { loglevel: 'warning' },
+        outbounds: [
+            { protocol: 'vless', settings: { vnext: [{ address: 'cdn.example.com', port: 443,
+                users: [{ encryption: 'none', flow: '', id: '00000000-0000-4000-8000-000000000001', level: 8 }] }] },
+              streamSettings: { network: 'ws', security: 'tls', sockopt: { domainStrategy: 'UseIP', happyEyeballs: { tryDelayMs: 250 } },
+                tlsSettings: { allowInsecure: false, alpn: ['http/1.1'], fingerprint: 'chrome', serverName: 'cdn.example.com' },
+                wsSettings: { path: '/assets', headers: { Host: 'cdn.example.com' } } }, tag: 'proxy' },
+            { protocol: 'freedom', streamSettings: { sockopt: { domainStrategy: 'UseIP' } }, tag: 'direct' },
+            { protocol: 'blackhole', settings: { response: { type: 'http' } }, tag: 'block' }
+        ],
+        policy: { levels: { 8: { connIdle: 300, downlinkOnly: 1, handshake: 4, uplinkOnly: 1 } } },
+        remarks: 'Sample-Config',
+        routing: { domainStrategy: 'IPIfNonMatch', rules: [
+            { network: 'udp', outboundTag: 'block', port: '443', type: 'field' },
+            { ip: ['geoip:ir'], outboundTag: 'direct', type: 'field' }] }
+    };
+
+    function vcfSetHint(text, isError) {
+        vcfHint.textContent = text;
+        vcfHint.style.color = isError ? '#f87171' : '';
+    }
+
+    function vcfOpts() {
+        return {
+            mode: vcfMode.value, fragment: vcfFragment.value, cleanIps: vcfCleanIps.value,
+            servers: vcfServers.value, snis: vcfSnis.value, alpnMode: vcfAlpn.value, policy: vcfPolicy.value,
+            remarks: vcfRemarks.value.trim(), dnsProfile: vcfDns.checked, template: vcfTemplate.checked,
+            dropQuic: vcfDropQuic.checked
+        };
+    }
+
+    // Options (servers, clean IPs …) persist on this device only.
+    function vcfSaveOpts() {
+        try {
+            const o = vcfOpts();
+            delete o.remarks;
+            localStorage.setItem(VCF_STORE_OPTS, JSON.stringify(o));
+        } catch (e) { /* storage blocked */ }
+    }
+    function vcfLoadOpts() {
+        let o = null;
+        try { o = JSON.parse(localStorage.getItem(VCF_STORE_OPTS) || 'null'); } catch (e) { o = null; }
+        if (!o || typeof o !== 'object') return;
+        const set = (el, v) => { if (typeof v === 'string' && (el.tagName !== 'SELECT' || [...el.options].some(x => x.value === v))) el.value = v; };
+        set(vcfMode, o.mode); set(vcfFragment, o.fragment); set(vcfCleanIps, o.cleanIps); set(vcfServers, o.servers);
+        set(vcfSnis, o.snis); set(vcfAlpn, o.alpnMode); set(vcfPolicy, o.policy);
+        if (typeof o.dnsProfile === 'boolean') vcfDns.checked = o.dnsProfile;
+        if (typeof o.template === 'boolean') vcfTemplate.checked = o.template;
+        if (typeof o.dropQuic === 'boolean') vcfDropQuic.checked = o.dropQuic;
+    }
+
+    function vcfReadHistory() {
+        try {
+            const l = JSON.parse(localStorage.getItem(VCF_STORE_HISTORY) || '[]');
+            return Array.isArray(l) ? l : [];
+        } catch (e) { return []; }
+    }
+    function vcfRenderHistory() {
+        const list = vcfReadHistory();
+        vcfHistory.textContent = '';
+        if (!list.length) { vcfHistory.textContent = 'هنوز کانفیگی اصلاح نکرده‌اید.'; return; }
+        list.forEach((h, i) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'vcf-history-item';
+            b.textContent = String(h.name || 'config') + ' · ' + new Date(h.at).toLocaleString('fa-IR') + ' · ' + (h.fixes | 0) + ' اصلاح';
+            b.addEventListener('click', () => {
+                const item = vcfReadHistory()[i];
+                if (!item) return;
+                vcfResult = null;
+                vcfOutputText = String(item.json || '');
+                try { vcfOut.innerHTML = highlightJSON(JSON.parse(vcfOutputText)); } catch (e) { vcfOut.textContent = vcfOutputText; }
+                vcfScores.textContent = '';
+                vcfLog.textContent = '';
+                vcfOutRemark.textContent = 'بازیابی از تاریخچه';
+                vcfOutSection.style.display = '';
+                btnPackVcf.disabled = true;
+            });
+            vcfHistory.appendChild(b);
+        });
+    }
+    function vcfPushHistory(name, fixes, json) {
+        try {
+            const list = vcfReadHistory();
+            list.unshift({ name, at: Date.now(), fixes, json });
+            localStorage.setItem(VCF_STORE_HISTORY, JSON.stringify(list.slice(0, 5)));
+        } catch (e) { /* storage full or blocked */ }
+        vcfRenderHistory();
+    }
+
+    function onVcfInput() {
+        const has = vcfInput.value.trim().length > 0;
+        btnVcf.disabled = !has;
+        vcfSetHint(has ? 'روش را انتخاب کنید و «اصلاح کانفیگ» را بزنید' : VCF_HINT, false);
+    }
+
+    function vcfRun() {
+        const raw = vcfInput.value.trim();
+        if (!raw) return;
+        vcfSaveOpts();
+        const r = vcfFix(raw, vcfOpts());
+        if (r.error) { vcfSetHint('❌ ' + r.error, true); vcfOutSection.style.display = 'none'; return; }
+        vcfResult = r;
+        vcfOutputText = r.json;
+        const count = k => r.log.filter(l => l.kind === k).length;
+        vcfScores.textContent = '';
+        [['fix', 'اصلاح شد'], ['ok', 'سالم / مسیر'], ['warn', 'هشدار']].forEach(([k, cap]) => {
+            const d = document.createElement('div');
+            d.className = 'vcf-score';
+            d.dataset.kind = k;
+            const num = document.createElement('span');
+            num.className = 'num';
+            num.textContent = String(count(k));
+            const c = document.createElement('span');
+            c.className = 'cap';
+            c.textContent = cap;
+            d.append(num, c);
+            vcfScores.appendChild(d);
+        });
+        vcfLog.textContent = '';
+        r.log.forEach(l => {
+            const row = document.createElement('div');
+            row.className = 'vcf-entry';
+            row.dataset.kind = l.kind;
+            const mark = document.createElement('span');
+            mark.className = 'mark';
+            mark.textContent = l.kind === 'fix' ? '✓' : l.kind === 'warn' ? '!' : '•';
+            const body = document.createElement('div');
+            const head = document.createElement('div');
+            head.className = 'headline';
+            head.textContent = l.headline;
+            body.appendChild(head);
+            if (l.why) {
+                const why = document.createElement('div');
+                why.className = 'why';
+                why.textContent = l.why;
+                body.appendChild(why);
+            }
+            row.append(mark, body);
+            vcfLog.appendChild(row);
+        });
+        vcfOut.innerHTML = highlightJSON(r.config);
+        vcfOutRemark.textContent = r.config.remarks || '';
+        vcfOutSection.style.display = '';
+        btnPackVcf.disabled = !r.members.length;
+        btnCopyVcf.innerHTML = '<span class="copy-icon">📋</span> Copy';
+        vcfSetHint('کپی کنید، سپس در v2rayNG: + → Import config from clipboard', false);
+        vcfPushHistory(r.config.remarks || 'config', count('fix'), r.json);
+    }
+
+    btnVcf.addEventListener('click', vcfRun);
+    vcfInput.addEventListener('input', () => { vcfFilename.textContent = ''; onVcfInput(); });
+    vcfClear.addEventListener('click', () => {
+        vcfInput.value = '';
+        vcfFilename.textContent = '';
+        vcfOutSection.style.display = 'none';
+        onVcfInput();
+        vcfInput.focus();
+    });
+    vcfFile.addEventListener('change', () => {
+        const f = vcfFile.files && vcfFile.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onload = () => { vcfInput.value = String(reader.result || ''); onVcfInput(); vcfFilename.textContent = f.name; };
+        reader.readAsText(f);
+        vcfFile.value = '';
+    });
+    vcfSampleBtn.addEventListener('click', () => {
+        vcfInput.value = JSON.stringify(VCF_SAMPLE, null, 2);
+        vcfFilename.textContent = '';
+        onVcfInput();
+    });
+    [vcfMode, vcfFragment, vcfAlpn, vcfPolicy, vcfDns, vcfTemplate, vcfDropQuic].forEach(el => el.addEventListener('change', vcfSaveOpts));
+    [vcfCleanIps, vcfServers, vcfSnis].forEach(el => el.addEventListener('input', vcfSaveOpts));
+    btnCopyVcf.addEventListener('click', () => copyTextWithFeedback(btnCopyVcf, vcfOutputText, vcfHint));
+    btnDownloadVcf.addEventListener('click', () => {
+        if (vcfOutputText) downloadText('config-fixed-v8.json', vcfOutputText, 'application/json;charset=utf-8');
+    });
+    btnPackVcf.addEventListener('click', () => {
+        const p = vcfMemberPack(vcfResult);
+        if (p.error) { vcfSetHint('❌ ' + p.error, true); return; }
+        downloadText('config-fixed-v8-pack.json', p.json, 'application/json;charset=utf-8');
+        vcfSetHint(p.count + ' کانفیگ جدا (یکی برای هر مسیر) ذخیره شد — تک‌تک تست کنید تا ببینید کدام روی همراه اول وصل می‌شود', false);
+    });
+    vcfLoadOpts();
+    vcfRenderHistory();
+    onVcfInput();
 })();

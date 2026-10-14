@@ -2,19 +2,27 @@
 
 🌐 **[فارسی](README-fa.md)** | [English](README.md)
 
-A powerful, standalone web application with five tools:
+A powerful, standalone web application with six tools:
 
-1. **🧪 Templates** (default tab) — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
-2. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
-3. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
-4. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
-5. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
+1. **🛠️ VPN Fixer v8** (default tab) — the upgraded standalone VPN Config Fixer: one config whose balancer tries several routes at once (TLS fragment / no fragment, clean CDN IPs, several fingerprints) and keeps the one that works on the current network, with the original route as fallback.
+2. **🧪 Templates** — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
+3. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
+4. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
+5. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
+6. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
 
 All processing happens in your browser. No data is sent to any server — fetching a subscription link contacts only the provider URL you entered, and pasted or dropped content never leaves your browser.
 
 ## 🚀 Features
 
-### 🧪 Templates (default tab)
+### 🛠️ VPN Fixer v8 (default tab)
+- **Same pipeline as the standalone v7 page**, now inside the app: panel domain → connection domain swap, stale CDN pins and IPv6 removed from `dns.hosts`, `UseIPv4`, SNI / ws Host filled in (`headers.Host` → `host`), policy timings, `freedom` / sniffing clean-up, history of the last five fixes. No personal domains are built in: your panel → connection domain list is stored on your device only.
+- **Fragment kept, not stripped**: v7 deleted every `finalmask`. v8 adds the fragment from a config that connects on MCI (`1-3 · 50-100 · 10-20 · maxSplit 10`, Xray-core 26+), keeps the config's own, or strips it — your choice.
+- **Multi-path (recommended)**: one balancer member per clean IP / address, each with and without the fragment and with chrome / edge / firefox / safari fingerprints. SNI and Host stay on your domain. `leastLoad` + `burstObservatory` pick the healthy routes every minute; the original unfragmented route is the fallback, so the same config keeps working where it already did.
+- **DNS without loops**: Iranian domains and the server domain are resolved by Shecan / Begzar routed direct; other DNS (1.1.1.1, 8.8.8.8) goes through the tunnel. Replaces resolvers such as 223.5.5.5 from the input.
+- **Test pack**: one single-route config per balancer member (plus the fallback) with distinct names, to see which route connects on each operator.
+
+### 🧪 Templates
 - **Analyse**: paste your full JSON config (or a link) and the tab lists what it does — transport, SNI, fingerprint, REALITY, domain fronting, finalmask, DNS pins, domestic DNS, balancers.
 - **Template A — Direct + DNS pin** (modelled on a working VLESS + REALITY config): keeps your server and rebuilds the rest with a chrome fingerprint, a finalmask fragment `1-3 · 50-100 · 10-20 · maxSplit 10` plus UDP noise (Xray-core 26+), `UseIP` with happy-eyeballs, the server domain pinned to its IP in `dns.hosts` (a **Look up** button resolves it over DNS-over-HTTPS) or resolved by a direct domestic DNS, and every domestic DNS routed direct.
 - **Template B — CDN multi-address balancer** (modelled on a working VLESS + ws + TLS CDN config): one balancer member per address you list (CDN edges, clean IPs, other domains), chrome / edge fingerprints, `leastLoad` + `burstObservatory`, a fallback member, Iranian DNS (Shecan / Begzar) for .ir domains and no core DNS for the server address. Optional SNI / Host / ALPN overrides for domain fronting.
@@ -78,8 +86,14 @@ This ensures that your final outgoing IP address is that of the **Chain Proxy**,
 
 For full clipboard support, serve this folder locally — e.g. `python3 -m http.server` or `npx serve` — then open via `http://localhost:PORT` (or HTTPS); opening the file directly (`file://`) falls back to manual copy.
 
+### 🛠️ VPN Fixer v8
+1. Open the app — the **VPN Fixer v8** tab is active by default.
+2. Paste your full JSON config (or a link), or pick a file.
+3. Add a few clean IPs if your server is behind a CDN (the most useful option for MCI), keep **multi-path** and the **known-good fragment**, and press **اصلاح کانفیگ**.
+4. Copy the result and in v2rayNG use **+ → Import config from clipboard**. If it still fails, download the **test pack** and test each route on its own.
+
 ### 🧪 Templates
-1. Open the app — the **Templates** tab is active by default.
+1. Open the app and switch to the **Templates** tab.
 2. Paste your full JSON config (or a link) and read the analysis.
 3. Pick **A** (REALITY or a single TLS server; press **Look up** to pin the server IP) or **B** (TLS behind a CDN; list several addresses).
 4. Press **Build from Template**, copy, and in v2rayNG use **+ → Import config from clipboard**.

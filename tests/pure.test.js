@@ -1866,3 +1866,99 @@ describe('working-config templates (Templates tab)', () => {
         assert.ok(!buildTemplateB(link, {}).error);
     });
 });
+
+describe('VPN Config Fixer v8 (upgraded standalone fixer)', () => {
+    const { vcfFix, vcfMemberPack, vcfParseServers, VCF_FRAGMENT } = pure;
+    const SINGLE = fs.readFileSync(path.join(__dirname, 'fixtures', 'ws-tls-cdn-single.json'), 'utf8');
+    const UUID = '00000000-0000-4000-8000-000000000003';
+    const proxies = c => c.outbounds.filter(o => o.protocol === 'vless');
+
+    it('parses the panel → connection domain list', () => {
+        assert.deepEqual(vcfParseServers('Panel.example.com = a.example.com, b.example.com\n# note\nextra.example.com'), [
+            { origin: 'panel.example.com', edges: ['a.example.com', 'b.example.com'] },
+            { origin: 'extra.example.com', edges: [] }
+        ]);
+    });
+
+    it('multi-path: fragment / plain members per clean IP, unfragmented fallback, balancer', () => {
+        const r = vcfFix(SINGLE, { cleanIps: '198.51.100.1\n198.51.100.2' });
+        assert.ok(!r.error, r.error);
+        const c = r.config;
+        const lb = c.outbounds.filter(o => /^lb-\d+$/.test(o.tag));
+        assert.equal(lb.length, 6);
+        assert.deepEqual(lb.map(o => o.settings.vnext[0].address),
+            ['cdn.example.com', 'cdn.example.com', '198.51.100.1', '198.51.100.1', '198.51.100.2', '198.51.100.2']);
+        assert.deepEqual(lb.map(o => !!o.streamSettings.finalmask), [true, false, true, false, true, false]);
+        assert.deepEqual(lb[0].streamSettings.finalmask.tcp[0].settings, VCF_FRAGMENT);
+        for (const o of lb) {
+            assert.equal(o.settings.vnext[0].users[0].id, UUID);
+            assert.equal(o.streamSettings.tlsSettings.serverName, 'cdn.example.com');
+            assert.equal(o.streamSettings.wsSettings.host, 'cdn.example.com');
+            assert.equal(o.streamSettings.wsSettings.headers, undefined);
+        }
+        assert.equal(lb[2].streamSettings.sockopt.domainStrategy, undefined, 'IP members need no DNS');
+        const fb = c.outbounds.find(o => o.tag === 'fallback');
+        assert.ok(fb && !fb.streamSettings.finalmask);
+        assert.equal(c.routing.balancers[0].fallbackTag, 'fallback');
+        assert.deepEqual(c.burstObservatory.subjectSelector, ['lb-']);
+        assert.ok(!c.routing.rules.some(r => r.outboundTag === 'proxy'));
+        assert.ok(c.routing.rules.some(r => r.port === '0-65535' && r.balancerTag === 'auto'));
+    });
+
+    it('resolves the server domain through a direct domestic DNS and drops stale pins', () => {
+        const c = vcfFix(SINGLE, {}).config;
+        assert.equal(c.dns.hosts['cdn.example.com'], undefined);
+        assert.ok(!c.dns.servers.some(s => s && s.address === '223.5.5.5'));
+        const srv = c.dns.servers.find(s => s && s.tag === 'domestic-dns-srv');
+        assert.deepEqual(srv.domains, ['full:cdn.example.com']);
+        assert.equal(c.routing.rules[0].outboundTag, 'direct');
+        assert.ok(c.routing.rules[0].inboundTag.includes('domestic-dns-srv'));
+        const diag = diagnoseFullConfig(JSON.stringify(c)).items;
+        assert.ok(!diag.some(i => i.code === 'dns-loop'), 'no DNS loop');
+        assert.ok(!diag.some(i => i.level === 'error'));
+    });
+
+    it('single mode adds the fragment, can swap in a clean IP; strip removes it', () => {
+        const a = vcfFix(SINGLE, { mode: 'single', cleanIps: '198.51.100.7' }).config;
+        assert.equal(proxies(a).length, 1);
+        const ob = proxies(a)[0];
+        assert.equal(ob.settings.vnext[0].address, '198.51.100.7');
+        assert.ok(ob.streamSettings.finalmask);
+        assert.equal(a.routing.balancers, undefined);
+        const b = vcfFix(SINGLE, { mode: 'single', fragment: 'strip' }).config;
+        assert.equal(proxies(b)[0].streamSettings.finalmask, undefined);
+    });
+
+    it('swaps a panel domain for its connection domain', () => {
+        const r = vcfFix(SINGLE.replace(/cdn\.example\.com/g, 'panel.example.com'),
+            { mode: 'single', servers: 'panel.example.com = edge.example.com' });
+        const ob = proxies(r.config)[0];
+        assert.equal(ob.settings.vnext[0].address, 'edge.example.com');
+        assert.equal(ob.streamSettings.tlsSettings.serverName, 'edge.example.com');
+        assert.equal(ob.streamSettings.wsSettings.host, 'edge.example.com');
+    });
+
+    it('accepts a share link and emits a one-config-per-route test pack', () => {
+        const link = 'vless://' + UUID + '@cdn.example.com:443?type=ws&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fws#t';
+        const r = vcfFix(link, { template: true });
+        assert.ok(!r.error, r.error);
+        assert.equal(r.members.length, 4);
+        const pack = vcfMemberPack(r);
+        assert.equal(pack.count, 5);
+        const arr = JSON.parse(pack.json);
+        for (const one of arr) {
+            assert.equal(one.outbounds.filter(o => o.protocol === 'vless').length, 1);
+            assert.equal(one.routing.balancers, undefined);
+            assert.ok(!one.routing.rules.some(x => x.balancerTag));
+        }
+        assert.notEqual(arr[0].remarks, arr[1].remarks);
+        assert.ok(vcfMemberPack(vcfFix(link, { mode: 'single' })).error);
+    });
+
+    it('log entries are plain text and errors are reported', () => {
+        const r = vcfFix(SINGLE, {});
+        assert.ok(r.log.every(l => ['fix', 'ok', 'warn'].includes(l.kind) && typeof l.headline === 'string'));
+        assert.ok(vcfFix('', {}).error);
+        assert.ok(vcfFix('{"a":1}', {}).error);
+    });
+});
