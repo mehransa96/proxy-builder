@@ -1,0 +1,367 @@
+{
+  "remarks": "Sample-CDN-balancer",
+  "log": {
+    "loglevel": "error"
+  },
+  "dns": {
+    "tag": "dns",
+    "queryStrategy": "UseIPv4",
+    "servers": [
+      {
+        "address": "178.22.122.100",
+        "domains": [
+          "domain:ir",
+          "domain:xn--mgba3a4f16a",
+          "gapgpt.app",
+          "aparat.com"
+        ],
+        "expectIPs": [
+          "geoip:ir"
+        ],
+        "skipFallback": true,
+        "tag": "domestic-dns"
+      },
+      {
+        "address": "185.55.226.26",
+        "domains": [
+          "domain:ir",
+          "domain:xn--mgba3a4f16a",
+          "gapgpt.app",
+          "aparat.com"
+        ],
+        "skipFallback": true,
+        "tag": "domestic-dns-2"
+      },
+      "1.1.1.1",
+      "8.8.8.8"
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "socks",
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true,
+        "userLevel": 8
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        "routeOnly": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "lb-0",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "a.example.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "level": 8,
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "wsSettings": {
+          "path": "/ws",
+          "host": "s3"
+        },
+        "tlsSettings": {
+          "serverName": "web.example.org",
+          "alpn": [
+            "h2"
+          ],
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "tag": "lb-1",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "b.example.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "level": 8,
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "wsSettings": {
+          "path": "/ws",
+          "host": "s3"
+        },
+        "tlsSettings": {
+          "serverName": "live.example.org",
+          "alpn": [
+            "h2"
+          ],
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "tag": "lb-2",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "198.51.100.1",
+            "port": 443,
+            "users": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "level": 8,
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "wsSettings": {
+          "path": "/ws",
+          "host": "s3"
+        },
+        "tlsSettings": {
+          "serverName": "web.example.org",
+          "alpn": [
+            "h2"
+          ],
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "tag": "lb-3",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "198.51.100.2",
+            "port": 443,
+            "users": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "level": 8,
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "wsSettings": {
+          "path": "/ws",
+          "host": "s3"
+        },
+        "tlsSettings": {
+          "serverName": "live.example.org",
+          "alpn": [
+            "h2"
+          ],
+          "fingerprint": "edge"
+        }
+      }
+    },
+    {
+      "tag": "ecloud",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "e1.example.net",
+            "port": 443,
+            "users": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "level": 8,
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "wsSettings": {
+          "path": "/ws",
+          "host": "s3.example.net"
+        },
+        "tlsSettings": {
+          "serverName": "s3.example.net",
+          "alpn": [
+            "h2"
+          ],
+          "fingerprint": "ios"
+        }
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "streamSettings": {
+        "sockopt": {
+          "domainStrategy": "UseIP"
+        }
+      }
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    },
+    {
+      "tag": "dns-out",
+      "protocol": "dns"
+    }
+  ],
+  "policy": {
+    "levels": {
+      "8": {
+        "connIdle": 300,
+        "handshake": 3,
+        "uplinkOnly": 2,
+        "downlinkOnly": 4
+      }
+    },
+    "system": {
+      "statsOutboundUplink": true,
+      "statsOutboundDownlink": true
+    }
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": [
+          "domestic-dns",
+          "domestic-dns-2"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "dns"
+        ],
+        "balancerTag": "auto"
+      },
+      {
+        "type": "field",
+        "port": "53",
+        "outboundTag": "dns-out"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "geosite:category-ads-all"
+        ],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "network": "udp",
+        "port": "443",
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "geosite:private"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "geoip:ir"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:ir",
+          "domain:xn--mgba3a4f16a",
+          "gapgpt.app",
+          "aparat.com"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "port": "0-65535",
+        "balancerTag": "auto"
+      }
+    ],
+    "balancers": [
+      {
+        "tag": "auto",
+        "selector": [
+          "lb-"
+        ],
+        "strategy": {
+          "type": "leastLoad",
+          "settings": {
+            "expected": 4
+          }
+        },
+        "fallbackTag": "ecloud"
+      }
+    ]
+  },
+  "stats": {},
+  "burstObservatory": {
+    "subjectSelector": [
+      "lb-"
+    ],
+    "pingConfig": {
+      "destination": "http://www.gstatic.com/generate_204",
+      "interval": "1m",
+      "sampling": 2,
+      "timeout": "8s",
+      "httpMethod": "GET",
+      "connectivity": "https://snapp.ir"
+    }
+  }
+}

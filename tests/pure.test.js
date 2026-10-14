@@ -12,6 +12,7 @@ const {
     looksLikeJsonConfig, parseFullConfigJson, summarizeFullConfig, enhanceFullConfigCore,
     FIXER_FRAGMENT_PRESETS, FIXER_FRAGMENT_TAG, isIpAddress, dnsDomainsMatch,
     diagnoseFullConfig, fixFullConfigCore, buildFixTestPack, linkToFullConfig,
+    TEMPLATE_A_FRAGMENT, buildTemplateA, buildTemplateB, describeConfigTechniques,
     subIsLink, subLooksLikeContent, subLooksLikeProxy, subValidate,
     SUB_IDLE_MS, SUB_TOTAL_MS, SUB_TOO_LARGE_MSG,
     extractSubConfigs, subIsBlockedError, subErrorText,
@@ -1775,5 +1776,93 @@ describe('Config Fixer (full Xray JSON)', () => {
         const f = fixFullConfigCore(r.json, { fp: 'chrome', fragmentMode: 'classic', fragment: FRAG, dnsFix: true });
         assert.ok(!f.error);
         assert.match(linkToFullConfig('ss://abc').error || '', /.+/);
+    });
+});
+
+describe('working-config templates (Templates tab)', () => {
+    const fx = name => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
+    const MINE = fx('v2rayng-full-config.json');
+    const REALITY = fx('known-good-reality.json');
+    const CDN = fx('known-good-cdn-balancer.json');
+
+    it('describes the techniques of both known-good configs', () => {
+        const a = describeConfigTechniques(REALITY).items.join('\n');
+        assert.match(a, /REALITY/);
+        assert.match(a, /pinned in dns\.hosts/);
+        assert.match(a, /finalmask tcp \+ udp/);
+        assert.doesNotMatch(a, /domain fronting/);
+        const b = describeConfigTechniques(CDN).items.join('\n');
+        assert.match(b, /domain fronting/);
+        assert.match(b, /balancer "auto" \(leastLoad\)/);
+        assert.match(b, /178\.22\.122\.100/);
+    });
+
+    it('known-good configs have no error / warn findings', () => {
+        for (const raw of [REALITY, CDN]) {
+            const bad = diagnoseFullConfig(raw).items.filter(i => i.level === 'error' || i.level === 'warn');
+            assert.deepEqual(bad, []);
+        }
+    });
+
+    it('template A: finalmask + noise, UseIP + happyEyeballs, server domain off the proxy DNS', () => {
+        const r = buildTemplateA(MINE, { fp: 'chrome', fragment: TEMPLATE_A_FRAGMENT, noise: true });
+        const ob = r.config.outbounds[0];
+        assert.equal(ob.tag, 'proxy');
+        assert.equal(ob.settings.vnext[0].users[0].id, '00000000-0000-4000-8000-000000000000');
+        assert.deepEqual(ob.streamSettings.finalmask.tcp[0].settings, { packets: '1-3', length: '50-100', delay: '10-20', maxSplit: '10' });
+        assert.equal(ob.streamSettings.finalmask.udp[0].type, 'noise');
+        assert.equal(ob.streamSettings.sockopt.domainStrategy, 'UseIP');
+        assert.ok(ob.streamSettings.sockopt.happyEyeballs);
+        assert.ok(r.config.dns.servers[2].domains.includes('full:example.com'));
+        assert.ok(!diagnoseFullConfig(r.json).items.some(i => i.code === 'dns-loop'));
+    });
+
+    it('template A: pins the server IP in dns.hosts and validates it', () => {
+        const r = buildTemplateA(MINE, { fragment: null, pinIp: '203.0.113.7' });
+        assert.equal(r.config.dns.hosts['example.com'], '203.0.113.7');
+        assert.equal('finalmask' in r.config.outbounds[0].streamSettings, false);
+        assert.match(buildTemplateA(MINE, { pinIp: 'nope' }).error, /IP address/);
+    });
+
+    it('template A: rebuilding the known-good REALITY config keeps its server and REALITY keys', () => {
+        const r = buildTemplateA(REALITY, { fp: 'chrome', fragment: TEMPLATE_A_FRAGMENT, noise: true, pinIp: '203.0.113.10' });
+        const before = JSON.parse(REALITY).outbounds[0];
+        const ob = r.config.outbounds[0];
+        assert.deepEqual(ob.settings, before.settings);
+        assert.deepEqual(ob.streamSettings.realitySettings, before.streamSettings.realitySettings);
+        assert.deepEqual(ob.streamSettings.finalmask.tcp, before.streamSettings.finalmask.tcp);
+    });
+
+    it('template B: one balancer member per address, SNI / Host kept, no core DNS on the proxy', () => {
+        const r = buildTemplateB(MINE, { addresses: '198.51.100.1\n198.51.100.2, cdn.example.com', alpn: 'keep' });
+        const lb = r.config.outbounds.filter(o => /^lb-/.test(o.tag));
+        assert.deepEqual(lb.map(o => o.settings.vnext[0].address), ['198.51.100.1', '198.51.100.2', 'cdn.example.com']);
+        for (const o of lb) {
+            assert.equal(o.streamSettings.tlsSettings.serverName, 'example.com');
+            assert.equal(o.streamSettings.wsSettings.host, 'example.com');
+            assert.equal(o.streamSettings.sockopt && o.streamSettings.sockopt.domainStrategy, undefined);
+        }
+        assert.deepEqual(lb.map(o => o.streamSettings.tlsSettings.fingerprint), ['chrome', 'chrome', 'chrome']);
+        const bal = r.config.routing.balancers[0];
+        assert.equal(bal.strategy.type, 'leastLoad');
+        assert.equal(bal.fallbackTag, 'fallback');
+        assert.ok(r.config.outbounds.some(o => o.tag === 'fallback'));
+        assert.deepEqual(r.config.burstObservatory.subjectSelector, ['lb-']);
+    });
+
+    it('template B: SNI / Host / ALPN overrides, and REALITY is refused', () => {
+        const r = buildTemplateB(MINE, { sni: 'front.example.org', host: 's3', alpn: 'h2' });
+        const ob = r.config.outbounds[0];
+        assert.equal(ob.streamSettings.tlsSettings.serverName, 'front.example.org');
+        assert.equal(ob.streamSettings.wsSettings.host, 's3');
+        assert.equal('headers' in ob.streamSettings.wsSettings, false);
+        assert.deepEqual(ob.streamSettings.tlsSettings.alpn, ['h2']);
+        assert.match(buildTemplateB(REALITY, {}).error, /REALITY/);
+    });
+
+    it('templates accept a share link as input', () => {
+        const link = 'vless://00000000-0000-4000-8000-000000000000@example.com:443?security=tls&sni=example.com&type=ws&path=%2Fa&host=example.com#L';
+        assert.ok(!buildTemplateA(link, { fragment: TEMPLATE_A_FRAGMENT }).error);
+        assert.ok(!buildTemplateB(link, {}).error);
     });
 });
