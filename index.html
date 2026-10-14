@@ -38,10 +38,301 @@
 
         <!-- Main Tabs -->
         <nav class="main-tabs">
-            <button class="main-tab active" data-view="ech">🛡️ ECH</button>
+            <button class="main-tab active" data-view="templates">🧪 Templates</button>
+            <button class="main-tab" data-view="fixer">🩺 Config Fixer</button>
+            <button class="main-tab" data-view="ech">🛡️ ECH</button>
             <button class="main-tab" data-view="enhancer">🧬 Fragment + Fingerprint</button>
             <button class="main-tab" data-view="chain">🔗 Chain Builder</button>
         </nav>
+
+        <!-- ===== View: Config Fixer (full Xray JSON, stock v2rayNG) ===== -->
+        <div id="view-fixer">
+            <div class="config-card" id="fixer-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span class="card-icon">🩺</span>
+                        <div>
+                            <h2>Config Fixer</h2>
+                            <p class="card-hint">Paste a full Xray JSON config (v2rayNG "Export full configuration" / Custom)
+                                — or a VLESS / VMess / Trojan link — to see what is wrong with it and get a repaired
+                                config that works on stock v2rayNG / v2rayN / any Xray core.</p>
+                        </div>
+                    </div>
+                    <div class="card-header-right">
+                        <span class="protocol-tag" id="fixer-protocol-tag">—</span>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <textarea id="fixer-input" class="config-input"
+                        placeholder="Paste a full Xray JSON config { ... }&#10;— or a vless:// vmess:// trojan:// link"
+                        spellcheck="false"></textarea>
+                    <button class="btn-clear" id="fixer-clear" title="Clear">✕</button>
+                </div>
+                <div class="parsed-info" id="fixer-diag"></div>
+            </div>
+
+            <div class="settings-card" id="fixer-options-card">
+                <h3 class="settings-title">🛠️ Repair Options</h3>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label for="fixer-fp">Fingerprint (uTLS)</label>
+                        <select id="fixer-fp">
+                            <option value="chrome" selected>chrome (recommended)</option>
+                            <option value="firefox">firefox</option>
+                            <option value="safari">safari</option>
+                            <option value="ios">ios</option>
+                            <option value="android">android</option>
+                            <option value="edge">edge</option>
+                            <option value="random">random</option>
+                            <option value="randomized">randomized</option>
+                            <option value="unsafe">unsafe (PattNG only)</option>
+                            <option value="keep">keep as is</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="fixer-frag-mode">Fragment method</label>
+                        <select id="fixer-frag-mode">
+                            <option value="classic" selected>Classic (freedom + dialerProxy) — any Xray core</option>
+                            <option value="finalmask">Final Mask — Xray 26+ / PattNG only</option>
+                            <option value="none">No fragment</option>
+                            <option value="keep">Keep as is</option>
+                        </select>
+                    </div>
+                    <div class="setting-item setting-item-wide" id="fixer-classic-wrap">
+                        <label for="fixer-frag-preset">Fragment preset (packets · length · interval)</label>
+                        <select id="fixer-frag-preset">
+                            <option value="f1" selected>tlshello · 10-20 · 10-20</option>
+                            <option value="f2">tlshello · 100-200 · 10-20</option>
+                            <option value="f3">tlshello · 1-3 · 1-3</option>
+                            <option value="f4">1-3 · 1-5 · 1-2</option>
+                            <option value="f5">1-1 · 3-5 · 5-10</option>
+                        </select>
+                        <div class="fixer-frag-fields">
+                            <input type="text" id="fixer-frag-packets" value="tlshello" spellcheck="false" title="packets" placeholder="packets">
+                            <input type="text" id="fixer-frag-length" value="10-20" spellcheck="false" title="length" placeholder="length">
+                            <input type="text" id="fixer-frag-interval" value="10-20" spellcheck="false" title="interval (ms)" placeholder="interval">
+                        </div>
+                    </div>
+                    <div class="setting-item setting-item-wide" id="fixer-fm-wrap" style="display:none;">
+                        <label for="fixer-fm">Final Mask (JSON)</label>
+                        <textarea id="fixer-fm" class="setting-textarea" rows="4" spellcheck="false">{"tcp": [{"type": "fragment", "settings": {"packets": "tlshello", "lengths": ["0", "104", "1"], "delays": ["0"], "maxSplit": "0"}},{"type": "fragment", "settings": {"packets": "1-1", "lengths": ["114", "1"], "delays": ["1"], "maxSplit": "11"}}]}</textarea>
+                    </div>
+                    <div class="setting-item">
+                        <label for="fixer-address">Server address / clean IP — empty to keep</label>
+                        <input type="text" id="fixer-address" placeholder="e.g. a clean CDN IP" spellcheck="false">
+                    </div>
+                    <div class="setting-item">
+                        <label for="fixer-remarks">Remarks — empty to keep</label>
+                        <input type="text" id="fixer-remarks" placeholder="Config name" spellcheck="false">
+                    </div>
+                    <div class="setting-item setting-item-wide fixer-checks">
+                        <label><input type="checkbox" id="fixer-dns" checked> Resolve the server domain via a direct domestic DNS (prevents a DNS loop through the proxy)</label>
+                        <label><input type="checkbox" id="fixer-alpn"> Force ALPN http/1.1 on ws / httpupgrade when h2 is set</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="generate-section">
+                <button class="btn-generate" id="btn-fix" disabled>
+                    <span class="btn-icon">🩺</span> Fix Config
+                </button>
+                <button class="btn-generate btn-generate-alt" id="btn-fix-pack" disabled
+                    title="One config per fragment preset plus a no-fragment control — import all and test which connects">
+                    <span class="btn-icon">🧪</span> Build Test Pack
+                </button>
+                <p class="generate-hint" id="fixer-hint">Paste a full JSON config or a link above to enable</p>
+            </div>
+
+            <div class="output-section" id="fixer-output-section" style="display:none;">
+                <div class="output-header">
+                    <h3 id="fixer-output-title">📋 Fixed Config</h3>
+                    <div class="output-actions">
+                        <button class="btn-copy" id="btn-copy-fixer" title="Copy to clipboard">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                        <button class="btn-download" id="btn-download-fixer" title="Download as .json">
+                            <span class="download-icon">💾</span> .json
+                        </button>
+                    </div>
+                </div>
+                <div class="output-remark" id="fixer-output-remark"></div>
+                <pre class="output-code"><code id="fixer-output"></code></pre>
+            </div>
+
+            <details class="info-section">
+                <summary>ℹ️ Why a config fails on filtered mobile networks, and what the fixer changes</summary>
+                <div class="info-content">
+                    <ul>
+                        <li><strong>Fingerprint</strong> — <code>unsafe</code> sends Go's own TLS ClientHello. It only
+                            makes sense in PattNG together with custom cipher suites; on stock v2rayNG it is easy for DPI to
+                            recognise. The fixer sets a browser fingerprint (<code>chrome</code> by default).</li>
+                        <li><strong>Final Mask</strong> — <code>streamSettings.finalmask</code> is only understood by
+                            Xray-core 26+ (PattNG, recent builds). Older cores ignore it silently, so no fragmentation
+                            happens at all.</li>
+                        <li><strong>Classic fragment</strong> — adds a <code>freedom</code> outbound tagged
+                            <code>fragment</code> with <code>packets / length / interval</code> and points the proxy's
+                            <code>sockopt.dialerProxy</code> at it. Every Xray core since 1.8 supports this.</li>
+                        <li><strong>DNS loop</strong> — with <code>sockopt.domainStrategy: UseIPv4</code> the core resolves
+                            the server domain through its own DNS; if that DNS query is routed through the proxy, the proxy
+                            can never connect. The fixer adds a direct DNS rule for the server domain.</li>
+                        <li><strong>Clean IP</strong> — replaces the server address and keeps SNI and the ws Host on the
+                            original domain, so a CDN still routes the request.</li>
+                        <li><strong>Test Pack</strong> — no single fragment value works on every network. The pack is a JSON
+                            array with one config per preset plus a no-fragment control, each with its own name. Import it
+                            (v2rayNG: Import config from clipboard), run the real-delay test, and keep the one that
+                            connects.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+
+        <!-- ===== View: Templates from known-good configs ===== -->
+        <div id="view-templates" style="display:none;">
+            <div class="config-card" id="tpl-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span class="card-icon">🧪</span>
+                        <div>
+                            <h2>Working Templates</h2>
+                            <p class="card-hint">Rebuilds your config around one of two layouts taken from configs that
+                                connect on MCI. Paste your full JSON config or a VLESS / VMess / Trojan link — your server,
+                                UUID and transport are kept; DNS, routing, fingerprint and fragment come from the template.</p>
+                        </div>
+                    </div>
+                    <div class="card-header-right">
+                        <span class="protocol-tag" id="tpl-protocol-tag">—</span>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <textarea id="tpl-input" class="config-input"
+                        placeholder="Paste your full Xray JSON config { ... }&#10;— or a vless:// vmess:// trojan:// link"
+                        spellcheck="false"></textarea>
+                    <button class="btn-clear" id="tpl-clear" title="Clear">✕</button>
+                </div>
+                <div class="parsed-info" id="tpl-info"></div>
+            </div>
+
+            <div class="sub-tabs">
+                <button class="sub-tab active" data-tplsubtab="a">🅰 Direct + DNS pin (REALITY / TLS)</button>
+                <button class="sub-tab" data-tplsubtab="b">🅱 CDN multi-address balancer (TLS)</button>
+            </div>
+
+            <div class="settings-card sub-panel active" id="tpl-panel-a">
+                <h3 class="settings-title">🅰 Template A — single proxy, finalmask fragment, DNS pinned</h3>
+                <p class="card-hint tpl-desc">Modelled on a working VLESS + REALITY config: chrome fingerprint, finalmask
+                    fragment <code>1-3 · 50-100 · 10-20 · maxSplit 10</code> plus UDP noise, <code>UseIP</code> with
+                    happy-eyeballs, the server domain pinned to its IP in <code>dns.hosts</code> (or resolved by a direct
+                    domestic DNS), and every domestic DNS routed direct. Finalmask needs Xray-core 26+ (PattNG / a recent v2rayNG).</p>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label for="tpl-a-fp">Fingerprint</label>
+                        <select id="tpl-a-fp">
+                            <option value="chrome" selected>chrome</option>
+                            <option value="firefox">firefox</option>
+                            <option value="safari">safari</option>
+                            <option value="ios">ios</option>
+                            <option value="edge">edge</option>
+                            <option value="random">random</option>
+                            <option value="keep">keep as is</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="tpl-a-pin">Server IP to pin — empty to use direct DNS</label>
+                        <div class="tpl-inline">
+                            <input type="text" id="tpl-a-pin" placeholder="e.g. 203.0.113.10" spellcheck="false">
+                            <button class="btn-subtle" id="btn-tpl-resolve" type="button" title="Look up the server domain's IPv4 address (DNS over HTTPS)">🔎 Look up</button>
+                        </div>
+                    </div>
+                    <div class="setting-item setting-item-wide">
+                        <label>Fragment (packets · length · delay · maxSplit) — clear packets to skip</label>
+                        <div class="fixer-frag-fields tpl-frag-fields">
+                            <input type="text" id="tpl-a-packets" value="1-3" spellcheck="false" title="packets" placeholder="packets">
+                            <input type="text" id="tpl-a-length" value="50-100" spellcheck="false" title="length" placeholder="length">
+                            <input type="text" id="tpl-a-delay" value="10-20" spellcheck="false" title="delay (ms)" placeholder="delay">
+                            <input type="text" id="tpl-a-maxsplit" value="10" spellcheck="false" title="maxSplit" placeholder="maxSplit">
+                        </div>
+                    </div>
+                    <div class="setting-item setting-item-wide fixer-checks">
+                        <label><input type="checkbox" id="tpl-a-noise" checked> UDP noise (finalmask)</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-card sub-panel" id="tpl-panel-b">
+                <h3 class="settings-title">🅱 Template B — several addresses, leastLoad balancer</h3>
+                <p class="card-hint tpl-desc">Modelled on a working VLESS + ws + TLS CDN config: the same server reached
+                    through several addresses (CDN edges, clean IPs or other domains pointing at it), one balancer member
+                    each with chrome / edge fingerprints, <code>leastLoad</code> + <code>burstObservatory</code> to pick the
+                    fastest, a fallback member, Iranian DNS (Shecan / Begzar) for .ir domains and no core DNS for the server
+                    address. Only for TLS servers behind a CDN or with several reachable addresses.</p>
+                <div class="settings-grid">
+                    <div class="setting-item setting-item-wide">
+                        <label for="tpl-b-addresses">Addresses — one per line (empty = the original address)</label>
+                        <textarea id="tpl-b-addresses" class="setting-textarea" rows="4" spellcheck="false" placeholder="cdn-edge.example.com&#10;198.51.100.1&#10;198.51.100.2"></textarea>
+                    </div>
+                    <div class="setting-item">
+                        <label for="tpl-b-sni">SNI (serverName) — empty to keep</label>
+                        <input type="text" id="tpl-b-sni" placeholder="keep current" spellcheck="false">
+                    </div>
+                    <div class="setting-item">
+                        <label for="tpl-b-host">Host header — empty to keep</label>
+                        <input type="text" id="tpl-b-host" placeholder="keep current" spellcheck="false">
+                    </div>
+                    <div class="setting-item">
+                        <label for="tpl-b-alpn">ALPN</label>
+                        <select id="tpl-b-alpn">
+                            <option value="keep" selected>keep as is</option>
+                            <option value="http/1.1">http/1.1</option>
+                            <option value="h2">h2 (as in the working config)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="generate-section">
+                <button class="btn-generate" id="btn-tpl" disabled>
+                    <span class="btn-icon">🧪</span> Build from Template
+                </button>
+                <p class="generate-hint" id="tpl-hint">Paste a full JSON config or a link above to enable</p>
+            </div>
+
+            <div class="output-section" id="tpl-output-section" style="display:none;">
+                <div class="output-header">
+                    <h3 id="tpl-output-title">📋 Template Config</h3>
+                    <div class="output-actions">
+                        <button class="btn-copy" id="btn-copy-tpl" title="Copy to clipboard">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                        <button class="btn-download" id="btn-download-tpl" title="Download as .json">
+                            <span class="download-icon">💾</span> .json
+                        </button>
+                    </div>
+                </div>
+                <div class="output-remark" id="tpl-output-remark"></div>
+                <pre class="output-code"><code id="tpl-output"></code></pre>
+            </div>
+
+            <details class="info-section">
+                <summary>ℹ️ What the two working configs do differently</summary>
+                <div class="info-content">
+                    <ul>
+                        <li><strong>No DNS loop.</strong> Both keep the proxy from waiting on its own DNS: the REALITY
+                            config pins the server domain to its IP in <code>dns.hosts</code> and routes every domestic DNS
+                            direct; the CDN config sets no <code>sockopt.domainStrategy</code>, so the system resolves the
+                            server address.</li>
+                        <li><strong>An SNI the filter lets through.</strong> REALITY borrows a big site's TLS identity
+                            (<code>www.samsung.com</code>); the CDN config fronts a different, unfiltered domain as SNI and
+                            routes on the Host header.</li>
+                        <li><strong>Redundancy.</strong> The CDN config tries several addresses at once and keeps the
+                            fastest one alive with an observatory.</li>
+                        <li><strong>Fragment is optional.</strong> The CDN config uses none; the REALITY config uses a
+                            finalmask fragment with <code>maxSplit</code> and UDP noise.</li>
+                        <li>A template cannot change the server side: if your server's IP or domain is blocked, use template
+                            B with CDN addresses or clean IPs that reach the same server.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
 
         <!-- ===== View: Chain Builder (existing) ===== -->
         <div id="view-chain" style="display:none;">
@@ -578,7 +869,7 @@
                         <div>
                             <h2>Proxy URL Enhancer</h2>
                             <p class="card-hint">Adds <code>cs</code> (cipher suites), <code>fm</code> (fragment mask)
-                                and <code>fp</code> to VLESS / Trojan URLs (supports single or multiple URLs) — or paste a full Xray JSON config (v2rayNG "Export full configuration" / Custom) to patch it in place. You can also drop a saved .txt file onto this card.</p>
+                                and <code>fp</code> to VLESS / Trojan URLs (supports single or multiple URLs) — or paste a full Xray JSON config (v2rayNG "Export full configuration" / Custom) to patch it in place. You can also drop a saved .txt file onto this card.<br>⚠️ The defaults here (<code>fp=unsafe</code> + Final Mask) are for PattNG / Xray-core 26+. On stock v2rayNG use the <strong>🩺 Config Fixer</strong> tab instead.</p>
                         </div>
                     </div>
                     <div class="card-header-right">

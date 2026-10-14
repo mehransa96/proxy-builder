@@ -2,15 +2,27 @@
 
 🌐 **[فارسی](README-fa.md)** | [English](README.md)
 
-A powerful, standalone web application with three tools:
+A powerful, standalone web application with five tools:
 
-1. **🛡️ ECH** (default tab) — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
-2. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
-3. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
+1. **🧪 Templates** (default tab) — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
+2. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
+3. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
+4. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
+5. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
 
 All processing happens in your browser. No data is sent to any server — fetching a subscription link contacts only the provider URL you entered, and pasted or dropped content never leaves your browser.
 
 ## 🚀 Features
+
+### 🧪 Templates (default tab)
+- **Analyse**: paste your full JSON config (or a link) and the tab lists what it does — transport, SNI, fingerprint, REALITY, domain fronting, finalmask, DNS pins, domestic DNS, balancers.
+- **Template A — Direct + DNS pin** (modelled on a working VLESS + REALITY config): keeps your server and rebuilds the rest with a chrome fingerprint, a finalmask fragment `1-3 · 50-100 · 10-20 · maxSplit 10` plus UDP noise (Xray-core 26+), `UseIP` with happy-eyeballs, the server domain pinned to its IP in `dns.hosts` (a **Look up** button resolves it over DNS-over-HTTPS) or resolved by a direct domestic DNS, and every domestic DNS routed direct.
+- **Template B — CDN multi-address balancer** (modelled on a working VLESS + ws + TLS CDN config): one balancer member per address you list (CDN edges, clean IPs, other domains), chrome / edge fingerprints, `leastLoad` + `burstObservatory`, a fallback member, Iranian DNS (Shecan / Begzar) for .ir domains and no core DNS for the server address. Optional SNI / Host / ALPN overrides for domain fronting.
+
+### 🩺 Config Fixer
+- **Diagnose**: paste a full Xray JSON config (v2rayNG **Export full configuration** / Custom) or a `vless://` / `vmess://` / `trojan://` link. The tab lists what is wrong: fingerprint `unsafe` (Go TLS, PattNG-only), `finalmask` (Xray-core 26+ only — older cores ignore it silently), no TLS fragmentation, ws/httpupgrade with ALPN `h2`, an IP address without SNI, `allowInsecure`, a `dialerProxy` pointing at a missing outbound, mux together with flow, and a DNS loop (the server domain resolved by a DNS server whose traffic is routed through the proxy itself).
+- **Fix**: sets a browser uTLS fingerprint (`chrome` by default), adds the **classic fragment** — a `freedom` outbound tagged `fragment` with `packets / length / interval`, wired in through `sockopt.dialerProxy` (works on every Xray core) — removes `finalmask` and ignored `cipherSuites`, forces ALPN `http/1.1` on ws, adds a direct DNS rule for the server domain, and can swap the address for a clean IP while keeping SNI / Host. Everything else in the config is preserved. Final Mask mode is still available for PattNG.
+- **Test Pack**: builds a JSON array with one config per fragment preset plus a no-fragment control, each with its own name. Import them all, run the real-delay test and keep the one that connects — no single fragment value works on every network.
 
 ### 🛡️ ECH
 - **Paste & Enhance**: Paste single or multiple `vless://` or `trojan://` URLs (one per line) and get enhanced links with `fp` and `ech` parameters added.
@@ -66,8 +78,20 @@ This ensures that your final outgoing IP address is that of the **Chain Proxy**,
 
 For full clipboard support, serve this folder locally — e.g. `python3 -m http.server` or `npx serve` — then open via `http://localhost:PORT` (or HTTPS); opening the file directly (`file://`) falls back to manual copy.
 
+### 🧪 Templates
+1. Open the app — the **Templates** tab is active by default.
+2. Paste your full JSON config (or a link) and read the analysis.
+3. Pick **A** (REALITY or a single TLS server; press **Look up** to pin the server IP) or **B** (TLS behind a CDN; list several addresses).
+4. Press **Build from Template**, copy, and in v2rayNG use **+ → Import config from clipboard**.
+
+### 🩺 Config Fixer
+1. Open the app and switch to the **Config Fixer** tab.
+2. Paste your full JSON config (or a link). Read the diagnosis.
+3. Keep the defaults (chrome, classic fragment, direct DNS) and press **Fix Config** — or **Build Test Pack** to get several variants.
+4. Copy the result and in v2rayNG use **+ → Import config from clipboard** (or download the `.json`).
+
 ### 🛡️ ECH
-1. Open the app — the **ECH** tab is active by default.
+1. Open the app and switch to the **ECH** tab.
 2. Paste your **VLESS** or **Trojan** URL.
 3. Adjust the options if needed: server override (auto-filled from the URL), fingerprint (default `chrome`), ECH server preset or a manual value (bare domain auto-adds `+udp://8.8.8.8`).
 4. Click **"Enhance URL"** and copy the resulting link — import it into your client (Xray core, Sing-box 1.13.0+, or Clash 1.19.20+).

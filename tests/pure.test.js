@@ -11,6 +11,9 @@ const {
     ECH_PRESETS, FRAGMENT_PRESETS, SUB_SCHEME,
     enhanceUrlCore, enhanceEchUrlCore,
     looksLikeJsonConfig, parseFullConfigJson, summarizeFullConfig, enhanceFullConfigCore,
+    FIXER_FRAGMENT_PRESETS, FIXER_FRAGMENT_TAG, isIpAddress, dnsDomainsMatch,
+    diagnoseFullConfig, fixFullConfigCore, buildFixTestPack, linkToFullConfig,
+    TEMPLATE_A_FRAGMENT, buildTemplateA, buildTemplateB, describeConfigTechniques,
     subIsLink, subLooksLikeContent, subLooksLikeProxy, subValidate,
     SUB_IDLE_MS, SUB_TOTAL_MS, SUB_TOO_LARGE_MSG,
     extractSubConfigs, subIsBlockedError, subErrorText,
@@ -1727,5 +1730,234 @@ describe('xhttp / splithttp transport', () => {
             type: 'splithttp', security: 'none'
         }, 'chain', 'proxy');
         assert.deepEqual(out.transport, { type: 'xhttp', path: '/' });
+    });
+});
+
+describe('Config Fixer (full Xray JSON)', () => {
+    const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'v2rayng-full-config.json'), 'utf8');
+    const FRAG = FIXER_FRAGMENT_PRESETS.f1;
+    const codes = r => r.items.map(i => i.code);
+    const withProxy = (mut) => {
+        const cfg = JSON.parse(FIXTURE);
+        mut(cfg.outbounds[0], cfg);
+        return JSON.stringify(cfg);
+    };
+
+    it('helpers: isIpAddress and dnsDomainsMatch', () => {
+        assert.equal(isIpAddress('1.2.3.4'), true);
+        assert.equal(isIpAddress('[2001:db8::1]'), true);
+        assert.equal(isIpAddress('example.com'), false);
+        assert.equal(dnsDomainsMatch(['domain:ir'], 'a.b.ir'), true);
+        assert.equal(dnsDomainsMatch(['full:a.ir'], 'b.a.ir'), false);
+        assert.equal(dnsDomainsMatch(['geosite:private'], 'x.com'), null);
+        assert.equal(dnsDomainsMatch(['keyword:exam'], 'example.com'), true);
+    });
+
+    it('diagnoses the fixture: no fragment, DNS loop through the proxy', () => {
+        const r = diagnoseFullConfig(FIXTURE);
+        assert.deepEqual(codes(r), ['fp', 'no-fragment', 'dns-loop']);
+    });
+
+    it('flags fp=unsafe, finalmask, ws+h2, missing dialerProxy and IP without SNI', () => {
+        const raw = withProxy(ob => {
+            const ss = ob.streamSettings;
+            ss.tlsSettings.fingerprint = 'unsafe';
+            ss.tlsSettings.alpn = ['h2', 'http/1.1'];
+            ss.tlsSettings.serverName = '';
+            ss.finalmask = { tcp: [] };
+            ss.sockopt.dialerProxy = 'nope';
+            ob.settings.vnext[0].address = '1.2.3.4';
+        });
+        const c = codes(diagnoseFullConfig(raw));
+        for (const k of ['fp-unsafe', 'no-sni', 'alpn-h2', 'dialer-missing', 'finalmask']) assert.ok(c.includes(k), k);
+    });
+
+    it('a tagged DNS server is routed by its own tag (default outbound = proxy → loop)', () => {
+        const ir = withProxy(ob => { ob.settings.vnext[0].address = 'srv.example.ir'; });
+        assert.ok(codes(diagnoseFullConfig(ir)).includes('dns-loop'));
+        const fixed = withProxy((ob, cfg) => {
+            ob.settings.vnext[0].address = 'srv.example.ir';
+            cfg.routing.rules.unshift({ type: 'field', inboundTag: ['domestic-dns0'], outboundTag: 'direct' });
+        });
+        const c = codes(diagnoseFullConfig(fixed));
+        assert.ok(c.includes('dns'));
+        assert.ok(!c.includes('dns-loop'));
+    });
+
+    it('classic mode: chrome fp, freedom fragment outbound wired via dialerProxy, finalmask removed', () => {
+        const raw = withProxy(ob => {
+            ob.streamSettings.tlsSettings.fingerprint = 'unsafe';
+            ob.streamSettings.tlsSettings.cipherSuites = 'TLS_AES_128_GCM_SHA256';
+            ob.streamSettings.finalmask = { tcp: [] };
+        });
+        const r = fixFullConfigCore(raw, { fp: 'chrome', fragmentMode: 'classic', fragment: FRAG });
+        const out = JSON.parse(r.json);
+        const ss = out.outbounds[0].streamSettings;
+        assert.equal(ss.tlsSettings.fingerprint, 'chrome');
+        assert.equal('cipherSuites' in ss.tlsSettings, false);
+        assert.equal('finalmask' in ss, false);
+        assert.equal(ss.sockopt.dialerProxy, FIXER_FRAGMENT_TAG);
+        assert.equal(ss.sockopt.domainStrategy, 'UseIPv4');
+        const frag = out.outbounds.find(o => o.tag === FIXER_FRAGMENT_TAG);
+        assert.equal(frag.protocol, 'freedom');
+        assert.deepEqual(frag.settings.fragment, { packets: 'tlshello', length: '10-20', interval: '10-20' });
+        assert.equal(out.outbounds[0].tag, 'proxy');
+        const c = codes(diagnoseFullConfig(r.json));
+        assert.ok(c.includes('fragment'));
+        assert.ok(!c.includes('fp-unsafe') && !c.includes('finalmask'));
+    });
+
+    it('is idempotent: running twice keeps a single fragment outbound', () => {
+        const once = fixFullConfigCore(FIXTURE, { fp: 'chrome', fragmentMode: 'classic', fragment: FRAG }).json;
+        const twice = fixFullConfigCore(once, { fp: 'chrome', fragmentMode: 'classic', fragment: FIXER_FRAGMENT_PRESETS.f2 }).json;
+        const out = JSON.parse(twice);
+        assert.equal(out.outbounds.filter(o => o.tag === FIXER_FRAGMENT_TAG).length, 1);
+        assert.equal(out.outbounds.find(o => o.tag === FIXER_FRAGMENT_TAG).settings.fragment.length, '100-200');
+    });
+
+    it('none mode removes the fragment outbound and dialerProxy', () => {
+        const once = fixFullConfigCore(FIXTURE, { fragmentMode: 'classic', fragment: FRAG }).json;
+        const out = JSON.parse(fixFullConfigCore(once, { fragmentMode: 'none' }).json);
+        assert.equal(out.outbounds.some(o => o.tag === FIXER_FRAGMENT_TAG), false);
+        assert.equal('dialerProxy' in out.outbounds[0].streamSettings.sockopt, false);
+    });
+
+    it('finalmask mode writes finalmask and validates it', () => {
+        const fm = '{"tcp":[{"type":"fragment","settings":{"packets":"tlshello","length":"10-20","delay":"10-20"}}]}';
+        const out = JSON.parse(fixFullConfigCore(FIXTURE, { fragmentMode: 'finalmask', finalmask: fm }).json);
+        assert.deepEqual(out.outbounds[0].streamSettings.finalmask, JSON.parse(fm));
+        assert.match(fixFullConfigCore(FIXTURE, { fragmentMode: 'finalmask', finalmask: '{x' }).error, /Final Mask/);
+    });
+
+    it('fixes ws ALPN h2 → http/1.1 and keeps everything else untouched', () => {
+        const raw = withProxy(ob => { ob.streamSettings.tlsSettings.alpn = ['h2']; });
+        const before = JSON.parse(raw);
+        const out = JSON.parse(fixFullConfigCore(raw, { fp: 'keep', fragmentMode: 'keep', alpnFix: true }).json);
+        assert.deepEqual(out.outbounds[0].streamSettings.tlsSettings.alpn, ['http/1.1']);
+        for (const key of ['dns', 'inbounds', 'log', 'routing', 'remarks']) assert.deepEqual(out[key], before[key], key);
+    });
+
+    it('clean-IP override keeps SNI and ws Host on the original domain', () => {
+        const raw = withProxy(ob => { delete ob.streamSettings.tlsSettings.serverName; delete ob.streamSettings.wsSettings.headers; });
+        const out = JSON.parse(fixFullConfigCore(raw, { fragmentMode: 'keep', address: '104.16.1.1' }).json);
+        const ob = out.outbounds[0];
+        assert.equal(ob.settings.vnext[0].address, '104.16.1.1');
+        assert.equal(ob.streamSettings.tlsSettings.serverName, 'example.com');
+        assert.equal(ob.streamSettings.wsSettings.host, 'example.com');
+    });
+
+    it('dnsFix resolves the server domain through a direct DNS rule', () => {
+        const r = fixFullConfigCore(FIXTURE, { fragmentMode: 'keep', dnsFix: true });
+        const out = JSON.parse(r.json);
+        assert.deepEqual(out.dns.servers[0].domains, ['full:example.com']);
+        assert.equal(out.routing.rules[0].outboundTag, 'direct');
+        assert.ok(!codes(diagnoseFullConfig(r.json)).includes('dns-loop'));
+    });
+
+    it('test pack: one config per preset plus a no-fragment control, distinct remarks', () => {
+        const r = buildFixTestPack(FIXTURE, { fp: 'chrome' });
+        const n = Object.keys(FIXER_FRAGMENT_PRESETS).length;
+        assert.equal(r.configs.length, n + 1);
+        assert.equal(new Set(r.configs.map(c => c.remarks)).size, n + 1);
+        assert.equal(r.configs[n].outbounds.some(o => o.tag === FIXER_FRAGMENT_TAG), false);
+        assert.ok(Array.isArray(JSON.parse(r.json)));
+    });
+
+    it('turns a share link into a full config the fixer accepts', () => {
+        const link = 'vless://00000000-0000-4000-8000-000000000000@example.com:443?security=tls&sni=example.com&type=ws&path=%2Fa&host=example.com#L';
+        const r = linkToFullConfig(link);
+        assert.equal(r.config.outbounds[0].tag, 'proxy');
+        assert.equal(r.config.remarks, 'L');
+        const f = fixFullConfigCore(r.json, { fp: 'chrome', fragmentMode: 'classic', fragment: FRAG, dnsFix: true });
+        assert.ok(!f.error);
+        assert.match(linkToFullConfig('ss://abc').error || '', /.+/);
+    });
+});
+
+describe('working-config templates (Templates tab)', () => {
+    const fx = name => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
+    const MINE = fx('v2rayng-full-config.json');
+    const REALITY = fx('known-good-reality.json');
+    const CDN = fx('known-good-cdn-balancer.json');
+
+    it('describes the techniques of both known-good configs', () => {
+        const a = describeConfigTechniques(REALITY).items.join('\n');
+        assert.match(a, /REALITY/);
+        assert.match(a, /pinned in dns\.hosts/);
+        assert.match(a, /finalmask tcp \+ udp/);
+        assert.doesNotMatch(a, /domain fronting/);
+        const b = describeConfigTechniques(CDN).items.join('\n');
+        assert.match(b, /domain fronting/);
+        assert.match(b, /balancer "auto" \(leastLoad\)/);
+        assert.match(b, /178\.22\.122\.100/);
+    });
+
+    it('known-good configs have no error / warn findings', () => {
+        for (const raw of [REALITY, CDN]) {
+            const bad = diagnoseFullConfig(raw).items.filter(i => i.level === 'error' || i.level === 'warn');
+            assert.deepEqual(bad, []);
+        }
+    });
+
+    it('template A: finalmask + noise, UseIP + happyEyeballs, server domain off the proxy DNS', () => {
+        const r = buildTemplateA(MINE, { fp: 'chrome', fragment: TEMPLATE_A_FRAGMENT, noise: true });
+        const ob = r.config.outbounds[0];
+        assert.equal(ob.tag, 'proxy');
+        assert.equal(ob.settings.vnext[0].users[0].id, '00000000-0000-4000-8000-000000000000');
+        assert.deepEqual(ob.streamSettings.finalmask.tcp[0].settings, { packets: '1-3', length: '50-100', delay: '10-20', maxSplit: '10' });
+        assert.equal(ob.streamSettings.finalmask.udp[0].type, 'noise');
+        assert.equal(ob.streamSettings.sockopt.domainStrategy, 'UseIP');
+        assert.ok(ob.streamSettings.sockopt.happyEyeballs);
+        assert.ok(r.config.dns.servers[2].domains.includes('full:example.com'));
+        assert.ok(!diagnoseFullConfig(r.json).items.some(i => i.code === 'dns-loop'));
+    });
+
+    it('template A: pins the server IP in dns.hosts and validates it', () => {
+        const r = buildTemplateA(MINE, { fragment: null, pinIp: '203.0.113.7' });
+        assert.equal(r.config.dns.hosts['example.com'], '203.0.113.7');
+        assert.equal('finalmask' in r.config.outbounds[0].streamSettings, false);
+        assert.match(buildTemplateA(MINE, { pinIp: 'nope' }).error, /IP address/);
+    });
+
+    it('template A: rebuilding the known-good REALITY config keeps its server and REALITY keys', () => {
+        const r = buildTemplateA(REALITY, { fp: 'chrome', fragment: TEMPLATE_A_FRAGMENT, noise: true, pinIp: '203.0.113.10' });
+        const before = JSON.parse(REALITY).outbounds[0];
+        const ob = r.config.outbounds[0];
+        assert.deepEqual(ob.settings, before.settings);
+        assert.deepEqual(ob.streamSettings.realitySettings, before.streamSettings.realitySettings);
+        assert.deepEqual(ob.streamSettings.finalmask.tcp, before.streamSettings.finalmask.tcp);
+    });
+
+    it('template B: one balancer member per address, SNI / Host kept, no core DNS on the proxy', () => {
+        const r = buildTemplateB(MINE, { addresses: '198.51.100.1\n198.51.100.2, cdn.example.com', alpn: 'keep' });
+        const lb = r.config.outbounds.filter(o => /^lb-/.test(o.tag));
+        assert.deepEqual(lb.map(o => o.settings.vnext[0].address), ['198.51.100.1', '198.51.100.2', 'cdn.example.com']);
+        for (const o of lb) {
+            assert.equal(o.streamSettings.tlsSettings.serverName, 'example.com');
+            assert.equal(o.streamSettings.wsSettings.host, 'example.com');
+            assert.equal(o.streamSettings.sockopt && o.streamSettings.sockopt.domainStrategy, undefined);
+        }
+        assert.deepEqual(lb.map(o => o.streamSettings.tlsSettings.fingerprint), ['chrome', 'chrome', 'chrome']);
+        const bal = r.config.routing.balancers[0];
+        assert.equal(bal.strategy.type, 'leastLoad');
+        assert.equal(bal.fallbackTag, 'fallback');
+        assert.ok(r.config.outbounds.some(o => o.tag === 'fallback'));
+        assert.deepEqual(r.config.burstObservatory.subjectSelector, ['lb-']);
+    });
+
+    it('template B: SNI / Host / ALPN overrides, and REALITY is refused', () => {
+        const r = buildTemplateB(MINE, { sni: 'front.example.org', host: 's3', alpn: 'h2' });
+        const ob = r.config.outbounds[0];
+        assert.equal(ob.streamSettings.tlsSettings.serverName, 'front.example.org');
+        assert.equal(ob.streamSettings.wsSettings.host, 's3');
+        assert.equal('headers' in ob.streamSettings.wsSettings, false);
+        assert.deepEqual(ob.streamSettings.tlsSettings.alpn, ['h2']);
+        assert.match(buildTemplateB(REALITY, {}).error, /REALITY/);
+    });
+
+    it('templates accept a share link as input', () => {
+        const link = 'vless://00000000-0000-4000-8000-000000000000@example.com:443?security=tls&sni=example.com&type=ws&path=%2Fa&host=example.com#L';
+        assert.ok(!buildTemplateA(link, { fragment: TEMPLATE_A_FRAGMENT }).error);
+        assert.ok(!buildTemplateB(link, {}).error);
     });
 });

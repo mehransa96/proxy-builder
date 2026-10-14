@@ -1,9 +1,11 @@
 # Proxy Builder
 
-یک وب‌اپلیکیشن قدرتمند و مستقل با سه ابزار:
+یک وب‌اپلیکیشن قدرتمند و مستقل با پنج ابزار:
 
 <ul dir="rtl" style="direction: rtl; text-align: right;">
-  <li><b>🛡️ ECH</b> (تب پیش‌فرض) — ارتقای لینک <b>VLESS</b> یا <b>Trojan</b> با افزودن پارامترهای <code>fp</code> (اثر انگشت TLS، پیش‌فرض <code>chrome</code>) و <code>ech</code> (ECH Config List) به‌همراه قابلیت تغییر سرور (IP/دامنه) — خروجی لینکی آماده برای وارد کردن در کلاینت خودتان.</li>
+  <li><b>🧪 Templates</b> (تب پیش‌فرض) — بازسازی کانفیگ بر اساس دو الگوی برگرفته از کانفیگ‌هایی که روی همراه اول وصل می‌شوند.</li>
+  <li><b>🩺 Config Fixer</b> — عیب‌یابی و اصلاح کانفیگ کامل JSON برای v2rayNG معمولی (فینگرپرینت، فرگمنت کلاسیک، حلقه‌ی DNS، بسته‌ی تست).</li>
+  <li><b>🛡️ ECH</b> — ارتقای لینک <b>VLESS</b> یا <b>Trojan</b> با افزودن پارامترهای <code>fp</code> (اثر انگشت TLS، پیش‌فرض <code>chrome</code>) و <code>ech</code> (ECH Config List) به‌همراه قابلیت تغییر سرور (IP/دامنه) — خروجی لینکی آماده برای وارد کردن در کلاینت خودتان.</li>
   <li><b>🧬 Fragment + Fingerprint</b> — ارتقای لینک <b>VLESS</b> یا <b>Trojan</b> با افزودن پارامترهای <code>cs</code> (لیست Cipher Suites)، <code>fm</code> (Fragment Mask) و <code>fp</code> (اثر انگشت TLS) به‌همراه قابلیت تغییر سرور (IP/دامنه) — خروجی لینکی آماده برای وارد کردن در کلاینت خودتان. ساب‌تب <b>📥 Subscription</b> آن لینک اشتراک را می‌گیرد (یا محتوایش را) و همه کانفیگ‌های <b>VLESS</b> و <b>Trojan</b> داخل آن را دسته‌جمعی ارتقا می‌دهد، با خروجی کپی، <code>.txt</code> و <code>base64</code>.</li>
   <li><b>🔗 Chain Builder</b> — ترکیب دو کانفیگ پراکسی به یک کانفیگ واحد <b>Xray</b> یا <b>Sing-box</b> برای افزایش پایداری اتصال و استفاده از آی‌پی ثابت.</li>
 </ul>
@@ -11,6 +13,20 @@
 تمام پردازش‌ها درون مرورگر شما انجام می‌شود. هیچ داده‌ای به سروری ارسال نمی‌گردد. دریافت لینک اشتراک فقط با همان آدرسی که وارد کرده‌اید ارتباط برقرار می‌کند؛ محتوای جای‌گذاری یا رها‌شده هرگز از مرورگر شما خارج نمی‌شود.
 
 ## 🚀 ویژگی‌ها
+
+### 🧪 Templates (تب پیش‌فرض)
+<ul dir="rtl" style="direction: rtl; text-align: right;">
+  <li><b>تحلیل</b>: کانفیگ کامل JSON (یا لینک) را جای‌گذاری کنید تا تب نشان دهد چه کاری می‌کند — ترنسپورت، SNI، فینگرپرینت، REALITY، domain fronting، finalmask، پین DNS، DNS داخلی و balancer.</li>
+  <li><b>قالب A — اتصال مستقیم + پین DNS</b> (برگرفته از یک کانفیگ سالم VLESS + REALITY): سرور شما را نگه می‌دارد و بقیه را می‌سازد: فینگرپرینت chrome، فرگمنت finalmask با <code>1-3 · 50-100 · 10-20 · maxSplit 10</code> به‌همراه نویز UDP (Xray-core نسخه ۲۶ به بعد)، <code>UseIP</code> با happy-eyeballs، پین کردن دامنه‌ی سرور به IP آن در <code>dns.hosts</code> (دکمه‌ی <b>Look up</b> آن را با DNS-over-HTTPS پیدا می‌کند) یا resolve با DNS داخلی مستقیم، و مستقیم‌کردن همه‌ی DNSهای داخلی.</li>
+  <li><b>قالب B — چند آدرس CDN با balancer</b> (برگرفته از یک کانفیگ سالم VLESS + ws + TLS پشت CDN): برای هر آدرسی که وارد کنید (لبه‌ی CDN، IP تمیز، دامنه‌ی دیگر) یک عضو balancer، فینگرپرینت‌های chrome / edge، <code>leastLoad</code> + <code>burstObservatory</code>، یک عضو fallback، DNS ایرانی (شکن / بگذر) برای دامنه‌های .ir و بدون DNS هسته برای آدرس سرور. تغییر اختیاری SNI / Host / ALPN برای domain fronting.</li>
+</ul>
+
+### 🩺 Config Fixer
+<ul dir="rtl" style="direction: rtl; text-align: right;">
+  <li><b>عیب‌یابی</b>: کانفیگ کامل JSON (خروجی <b>Export full configuration</b> در v2rayNG یا Custom) یا لینک <code>vless://</code> / <code>vmess://</code> / <code>trojan://</code> را جای‌گذاری کنید. تب مشکلات را فهرست می‌کند: فینگرپرینت <code>unsafe</code> (TLS خود Go، فقط برای PattNG)، <code>finalmask</code> (فقط Xray-core نسخه ۲۶ به بعد — هسته‌های قدیمی‌تر بی‌صدا نادیده‌اش می‌گیرند)، نبودِ فرگمنت TLS، ws/httpupgrade با ALPN <code>h2</code>، آدرس IP بدون SNI، <code>allowInsecure</code>، <code>dialerProxy</code> به outbound ناموجود، mux همراه با flow، و حلقه‌ی DNS (دامنه‌ی سرور با DNSی resolve می‌شود که ترافیکش از خود پراکسی می‌گذرد).</li>
+  <li><b>اصلاح</b>: فینگرپرینت مرورگر (پیش‌فرض <code>chrome</code>) می‌گذارد، <b>فرگمنت کلاسیک</b> را اضافه می‌کند — یک outbound از نوع <code>freedom</code> با تگ <code>fragment</code> و مقادیر <code>packets / length / interval</code> که با <code>sockopt.dialerProxy</code> وصل می‌شود (روی همه‌ی هسته‌های Xray کار می‌کند) — <code>finalmask</code> و <code>cipherSuites</code> بی‌اثر را حذف می‌کند، ALPN را برای ws روی <code>http/1.1</code> می‌گذارد، برای دامنه‌ی سرور یک قانون DNS مستقیم اضافه می‌کند و می‌تواند آدرس را با IP تمیز عوض کند و SNI / Host را نگه دارد. بقیه‌ی کانفیگ دست‌نخورده می‌ماند. حالت Final Mask برای PattNG هنوز در دسترس است.</li>
+  <li><b>بسته‌ی تست (Test Pack)</b>: یک آرایه‌ی JSON می‌سازد با یک کانفیگ برای هر پریست فرگمنت به‌اضافه‌ی یک نسخه‌ی بدون فرگمنت، هرکدام با نام جدا. همه را وارد کنید، تست real-delay بگیرید و هرکدام که وصل شد را نگه دارید — هیچ مقدار فرگمنتی روی همه‌ی شبکه‌ها کار نمی‌کند.</li>
+</ul>
 
 ### 🛡️ ECH
 <ul dir="rtl" style="direction: rtl; text-align: right;">
@@ -92,9 +108,25 @@
 
 برای پشتیبانی کامل از کلیپ‌بورد، این پوشه را به‌صورت محلی سرو کنید — مثلاً `python3 -m http.server` یا `npx serve` — سپس از طریق `http://localhost:PORT` (یا HTTPS) باز کنید؛ باز کردن مستقیم فایل (`file://`) به کپی دستی برمی‌گردد.
 
+### 🧪 Templates
+<ol dir="rtl" style="direction: rtl; text-align: right;">
+  <li>برنامه را باز کنید — تب <b>Templates</b> به‌صورت پیش‌فرض فعال است.</li>
+  <li>کانفیگ کامل JSON (یا لینک) را جای‌گذاری کنید و تحلیل را بخوانید.</li>
+  <li><b>A</b> را انتخاب کنید (REALITY یا یک سرور TLS؛ با <b>Look up</b> آی‌پی سرور را پین کنید) یا <b>B</b> (TLS پشت CDN؛ چند آدرس وارد کنید).</li>
+  <li>روی <b>Build from Template</b> بزنید، کپی کنید و در v2rayNG از <b>+ ← Import config from clipboard</b> وارد کنید.</li>
+</ol>
+
+### 🩺 Config Fixer
+<ol dir="rtl" style="direction: rtl; text-align: right;">
+  <li>برنامه را باز کنید و به تب <b>Config Fixer</b> بروید.</li>
+  <li>کانفیگ کامل JSON (یا لینک) را جای‌گذاری کنید و نتیجه‌ی عیب‌یابی را بخوانید.</li>
+  <li>با تنظیمات پیش‌فرض (chrome، فرگمنت کلاسیک، DNS مستقیم) روی <b>Fix Config</b> بزنید — یا <b>Build Test Pack</b> برای چند نسخه‌ی مختلف.</li>
+  <li>خروجی را کپی کنید و در v2rayNG از <b>+ ← Import config from clipboard</b> وارد کنید (یا فایل <code>.json</code> را دانلود کنید).</li>
+</ol>
+
 ### 🛡️ ECH
 <ol dir="rtl" style="direction: rtl; text-align: right;">
-  <li>برنامه را باز کنید — تب <b>ECH</b> به‌صورت پیش‌فرض فعال است.</li>
+  <li>برنامه را باز کنید و به تب <b>ECH</b> بروید.</li>
   <li>لینک <b>VLESS</b> یا <b>Trojan</b> خود را جای‌گذاری کنید.</li>
   <li>در صورت نیاز گزینه‌ها را تنظیم کنید: تغییر سرور (به‌صورت خودکار از URL پر می‌شود)، اثر انگشت (پیش‌فرض <code>chrome</code>)، پریست سرور ECH یا مقدار دستی (دامنه خالی به‌صورت خودکار <code>+udp://8.8.8.8</code> اضافه می‌کند).</li>
   <li>روی <b>«Enhance URL»</b> کلیک کنید و لینک حاصل را کپی کرده و در کلاینت خود وارد کنید (هسته Xray، سینگ‌باکس ۱.۱۳ به بعد یا Clash نسخه ۱.۱۹.۲۰ به بعد).</li>
