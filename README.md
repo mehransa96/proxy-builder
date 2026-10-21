@@ -165,7 +165,9 @@ For full clipboard support, serve this folder locally — e.g. `python3 -m http.
 
 ## 🔧 Supported Transports
 
-TCP, TCP (http header), WebSocket, gRPC, HTTPUpgrade
+TCP, TCP (http header), WebSocket, gRPC, HTTPUpgrade, XHTTP (also `splithttp` links)
+
+XHTTP keeps the link's `host`, `path`, `mode` and `extra` in Xray output. The sing-box output uses an `xhttp` transport, which only sing-box builds that add XHTTP understand; upstream sing-box rejects it rather than silently connecting over plain TCP.
 
 ## 🔒 Supported TLS
 
