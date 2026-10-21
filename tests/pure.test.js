@@ -868,7 +868,10 @@ describe('026 parity (7) CORS step-3', () => {
 //   NOTE: re-enabling h2 changes the observable TLS fingerprint of
 //   generated sing-box configs — operator-signed-off 2026-10-12.
 // - sing-box vless always emits packet_encoding: ''.
-// - Empty alpn defaults to ['http/1.1'] in Xray but omits tls.alpn in sing-box.
+// - Empty alpn defaults to ['http/1.1'] in Xray (['h2'] for gRPC, which needs
+//   HTTP/2) but omits tls.alpn in sing-box.
+// - sing-box Reality always emits utls (fp, else 'chrome'): sing-box rejects
+//   Reality without uTLS.
 // - listen_port follows socks-port (||10808 fallback) / log mapping / remote-dns live in the DOM-bound
 //   generate* wrappers, not in these builders — untouched here.
 
@@ -1011,6 +1014,19 @@ describe('buildStreamSettings', () => {
             protocol: 'vless', uuid: 'u1', server: 'e.example.com', port: 443,
             type: 'ws', path: '/', security: 'tls', sni: 'e.example.com'
         }, false);
+        assert.deepEqual(out.tlsSettings.alpn, ['http/1.1']);
+    });
+
+    it('missing alpn on grpc defaults to h2', () => {
+        const out = buildStreamSettings({
+            protocol: 'trojan', password: 'pw', server: 'g.example.com', port: 443,
+            type: 'grpc', serviceName: 'svc', security: 'tls', sni: 'g.example.com'
+        }, false);
+        assert.deepEqual(out.tlsSettings.alpn, ['h2']);
+    });
+
+    it('explicit alpn on grpc is kept as given', () => {
+        const out = buildStreamSettings({ ...TROJAN_GRPC_TLS }, false);
         assert.deepEqual(out.tlsSettings.alpn, ['http/1.1']);
     });
 
@@ -1332,8 +1348,30 @@ describe('buildSingboxOutbound', () => {
             packet_encoding: '',
             network: 'tcp',
             flow: 'xtls-rprx-vision',
-            tls: { enabled: true, server_name: 'f.example.com' }
+            tls: {
+                enabled: true,
+                server_name: 'f.example.com',
+                utls: { enabled: true, fingerprint: 'chrome' }
+            }
         });
+    });
+
+    it('reality without fp still emits utls (defaults to chrome)', () => {
+        const out = buildSingboxOutbound({
+            protocol: 'vless', uuid: 'u1', server: 'r.example.com', port: 443,
+            type: 'tcp', security: 'reality', sni: 'r.example.com',
+            pbk: 'PUBKEY', sid: 'SHORT'
+        }, 'proxy', null);
+        assert.deepEqual(out.tls.utls, { enabled: true, fingerprint: 'chrome' });
+        assert.deepEqual(out.tls.reality, { enabled: true, public_key: 'PUBKEY', short_id: 'SHORT' });
+    });
+
+    it('plain tls without fp still omits utls', () => {
+        const out = buildSingboxOutbound({
+            protocol: 'vless', uuid: 'u1', server: 'd.example.com', port: 443,
+            type: 'ws', path: '/', security: 'tls', sni: 'd.example.com'
+        }, 'proxy', null);
+        assert.ok(!('utls' in out.tls));
     });
 
     it('reality with pbk emits the reality block', () => {

@@ -1176,10 +1176,13 @@ const ECH_PRESETS = {
 
         // TLS settings
         if (security === 'tls') {
+            // gRPC rides on HTTP/2, so an http/1.1-only ALPN breaks the
+            // handshake; default to h2 there when the link names none.
+            const alpnList = params.alpn ? params.alpn.split(',').map(s => s.trim()).filter(Boolean) : [];
             stream.tlsSettings = {
                 serverName: params.sni || params.server,
                 fingerprint: params.fp || 'chrome',
-                alpn: params.alpn ? params.alpn.split(',').map(s => s.trim()).filter(Boolean) : ['http/1.1'],
+                alpn: alpnList.length ? alpnList : (netType === 'grpc' ? ['h2'] : ['http/1.1']),
                 allowInsecure: !!params.allowInsecure
             };
             // ECH support
@@ -1487,11 +1490,12 @@ const ECH_PRESETS = {
                 if (alpnList.length) tls.alpn = alpnList;
             }
 
-            // uTLS fingerprint
-            if (params.fp) {
+            // uTLS fingerprint. sing-box rejects Reality without uTLS, so
+            // Reality falls back to 'chrome' (the Xray builder's default).
+            if (params.fp || security === 'reality') {
                 tls.utls = {
                     enabled: true,
-                    fingerprint: params.fp
+                    fingerprint: params.fp || 'chrome'
                 };
             }
 
