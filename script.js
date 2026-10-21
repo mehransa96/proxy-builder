@@ -406,10 +406,6 @@
                     {
                         ip_is_private: true,
                         outbound: 'direct'
-                    },
-                    {
-                        network: 'udp',
-                        action: 'reject'
                     }
                 ],
                 auto_detect_interface: true,

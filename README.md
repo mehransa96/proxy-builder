@@ -162,6 +162,9 @@ For full clipboard support, serve this folder locally — e.g. `python3 -m http.
 - **Xray** does not support **raw** (headerless TCP) configs — use TCP with http header type instead.
 - **Shadowsocks** cannot have any transport (WebSocket, gRPC, HTTPUpgrade, etc.) and cannot have TLS.
 - **SSH** is only supported by **Sing-box**. When SSH is used, the Xray tab is automatically disabled. Use the [sing-box client](https://sing-box.sagernet.org/) for SSH configs.
+- **Sing-box chains carry UDP** (games, voice calls, QUIC) through VLESS, VMess, Trojan and Shadowsocks hops; SOCKS hops stay TCP-only.
+- **VMess** links keep their own cipher (`scy`); `auto` is used only when the link has none.
+- WebSocket and HTTPUpgrade paths drop the early-data `ed` param whether it is written `?ed=` or `&ed=`; other query params are kept.
 
 ## 🔧 Supported Transports
 

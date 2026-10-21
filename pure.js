@@ -656,6 +656,7 @@ function parseVmess(url) {
             server: config.add,
             port: parseInt(config.port) || 443,
             aid: parseInt(config.aid) || 0,
+            scy: config.scy || undefined,
             remark: String(config.ps ?? ''),
             type: config.net || 'tcp',
             headerType: config.type || 'none',
@@ -1054,6 +1055,17 @@ function maskString(str) {
     return str.slice(0, 4) + '••••' + str.slice(-4);
 }
 
+// Remove the `ed` (early data) query param from a ws/httpupgrade path,
+// whether it is the first param (`?ed=`) or a later one (`&ed=`).
+// Other query params are kept; a now-empty query string is dropped.
+function stripEarlyDataParam(path) {
+    const str = String(path ?? '');
+    const q = str.indexOf('?');
+    if (q === -1) return str;
+    const kept = str.slice(q + 1).split('&').filter(p => p && !/^ed(=|$)/.test(p));
+    return kept.length ? str.slice(0, q) + '?' + kept.join('&') : str.slice(0, q);
+}
+
 function truncateStr(str, max) {
     str = String(str ?? '');
     if (!str || str.length <= max) return str;
@@ -1234,7 +1246,7 @@ const ECH_PRESETS = {
                         users: [{
                             id: params.uuid,
                             alterId: params.aid || 0,
-                            security: 'auto'
+                            security: params.scy || 'auto'
                         }]
                     }]
                 };
@@ -1333,7 +1345,7 @@ const ECH_PRESETS = {
                         users: [{
                             id: params.uuid,
                             alterId: params.aid || 0,
-                            security: 'auto'
+                            security: params.scy || 'auto'
                         }]
                     }]
                 };
@@ -1421,26 +1433,22 @@ const ECH_PRESETS = {
             case 'vless':
                 outbound.uuid = params.uuid;
                 outbound.packet_encoding = '';
-                outbound.network = 'tcp';
                 if (params.flow) outbound.flow = params.flow;
                 break;
 
             case 'vmess':
                 outbound.uuid = params.uuid;
-                outbound.security = 'auto';
+                outbound.security = params.scy || 'auto';
                 outbound.alter_id = params.aid || 0;
-                outbound.network = 'tcp';
                 break;
 
             case 'trojan':
                 outbound.password = params.password;
-                outbound.network = 'tcp';
                 break;
 
             case 'shadowsocks':
                 outbound.method = params.method;
                 outbound.password = params.password;
-                outbound.network = 'tcp';
                 break;
 
             case 'socks':
@@ -1527,7 +1535,7 @@ const ECH_PRESETS = {
             case 'ws': {
                 const wsTransport = {
                     type: 'ws',
-                    path: (params.path || '/').split('?ed=')[0],
+                    path: stripEarlyDataParam(params.path || '/'),
                     headers: {}
                 };
                 if (params.host) wsTransport.headers.Host = params.host;
@@ -1554,7 +1562,7 @@ const ECH_PRESETS = {
                 outbound.transport = {
                     type: 'httpupgrade',
                     host: params.host,
-                    path: (params.path || '/').split('?ed=')[0]
+                    path: stripEarlyDataParam(params.path || '/')
                 };
                 break;
             }
@@ -2812,7 +2820,7 @@ if (typeof module !== 'undefined' && module.exports) {
         VCF_FRAGMENT, VCF_DEFAULTS, vcfList, vcfParseServers, vcfFix, vcfMemberPack,
         parseProxyURLSingle, parseProxyURL, parseVless, parseVmess, parseTrojan, parseShadowsocks, parseSocks, parseHttp,
         buildStreamSettings, buildProxyOutbound, buildChainOutbound, buildSingboxOutbound,
-        maskString, truncateStr,
+        maskString, truncateStr, stripEarlyDataParam,
         subIsLink, subLooksLikeContent, subLooksLikeProxy, subValidate,
         SUB_IDLE_MS, SUB_TOTAL_MS, SUB_TOO_LARGE_MSG,
         extractSubConfigs, subIsBlockedError, subErrorText
