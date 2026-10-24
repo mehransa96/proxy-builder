@@ -71,6 +71,7 @@
     const viewTemplates = document.getElementById('view-templates');
     const viewVcf = document.getElementById('view-vcf');
     const viewSs = document.getElementById('view-ss');
+    const viewRly = document.getElementById('view-rly');
 
     // Enhancer elements
     const enhancerInput = document.getElementById('enhancer-input');
@@ -1896,8 +1897,9 @@
         viewTemplates.style.display = viewName === 'templates' ? '' : 'none';
         viewVcf.style.display = viewName === 'vcf' ? '' : 'none';
         viewSs.style.display = viewName === 'ss' ? '' : 'none';
+        viewRly.style.display = viewName === 'rly' ? '' : 'none';
         document.querySelectorAll('.protocol-badges .badge').forEach(badge => {
-            const show = viewName === 'ss' ? badge.dataset.protocol === 'ss' : viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
+            const show = viewName === 'ss' ? badge.dataset.protocol === 'ss' : viewName === 'rly' ? badge.dataset.protocol === 'vless' : viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
                 || (['fixer', 'templates', 'vcf'].includes(viewName) && badge.dataset.protocol === 'vmess');
             badge.style.display = show ? '' : 'none';
         });
@@ -1921,7 +1923,7 @@
     }
 
     // Apply badge visibility for the initial view (the v8 fixer is active by default)
-    switchMainTab('vcf');
+    switchMainTab('rly');
 
 
     function switchSubTab(subTabName) {
@@ -2879,5 +2881,97 @@
     btnCopySsLinks.addEventListener('click', () => copyTextWithFeedback(btnCopySsLinks, ssLinksText, ssHint));
     btnDownloadSs.addEventListener('click', () => {
         if (ssOutputText) downloadText('shadowsocks-config.json', ssOutputText, 'application/json;charset=utf-8');
+    });
+
+    // ===== Iran Relay tab =====
+    const rlyInput = document.getElementById('rly-input');
+    const rlyClear = document.getElementById('rly-clear');
+    const rlyFile = document.getElementById('rly-file');
+    const rlyFilename = document.getElementById('rly-filename');
+    const rlyInfo = document.getElementById('rly-info');
+    const rlyRelays = document.getElementById('rly-relays');
+    const rlyLabelIn = document.getElementById('rly-label');
+    const rlyAlpn = document.getElementById('rly-alpn');
+    const rlyRemarks = document.getElementById('rly-remarks');
+    const rlyIr = document.getElementById('rly-ir');
+    const rlyFallback = document.getElementById('rly-fallback');
+    const rlyFp = document.getElementById('rly-fp');
+    const btnRly = document.getElementById('btn-rly');
+    const rlyHint = document.getElementById('rly-hint');
+    const rlyOutSection = document.getElementById('rly-output-section');
+    const rlyOut = document.getElementById('rly-output');
+    const rlyLinksOut = document.getElementById('rly-links');
+    const rlyOutRemark = document.getElementById('rly-output-remark');
+    const btnCopyRly = document.getElementById('btn-copy-rly');
+    const btnDownloadRly = document.getElementById('btn-download-rly');
+    const btnCopyRlyLinks = document.getElementById('btn-copy-rly-links');
+    const RLY_HINT = 'اول کانفیگ یا لینک را بچسبانید';
+    let rlyOutputText = '';
+    let rlyLinksText = '';
+
+    function rlySetHint(text, isError) {
+        rlyHint.textContent = text;
+        rlyHint.style.color = isError ? '#f87171' : '';
+    }
+
+    function onRlyInput() {
+        const val = rlyInput.value.trim();
+        btnRly.disabled = true;
+        if (!val) { rlyInfo.innerHTML = ''; rlySetHint(RLY_HINT, false); return; }
+        const r = analyzeRelayInput(val);
+        if (r.error) {
+            rlyInfo.innerHTML = '<div class="error-msg">❌ ' + escapeHtml(r.error) + '</div>';
+            rlySetHint(RLY_HINT, false);
+            return;
+        }
+        const icon = { ok: '✅', info: 'ℹ️', warn: '⚠️', error: '❌' };
+        rlyInfo.innerHTML = r.items.map(i =>
+            '<div class="info-row"><span class="info-label">' + icon[i.level] + '</span><span class="info-value">' + escapeHtml(i.msg) + '</span></div>').join('');
+        btnRly.disabled = false;
+        rlySetHint(r.relays.length || rlyRelays.value.trim() ? 'دکمه‌ی ساخت را بزنید' : 'رله‌های داخل ایران را در تنظیمات وارد کنید، بعد دکمه‌ی ساخت', false);
+    }
+
+    function rlyBuild() {
+        const raw = rlyInput.value.trim();
+        if (!raw) return;
+        const r = buildRelayConfig(raw, {
+            relays: rlyRelays.value, label: rlyLabelIn.value.trim(), alpn: rlyAlpn.value,
+            remarks: rlyRemarks.value.trim(), irDomains: rlyIr.value,
+            fallback: rlyFallback.checked, fpRotate: rlyFp.checked
+        });
+        if (r.error) { rlySetHint('❌ ' + r.error, true); return; }
+        rlyOutputText = r.json;
+        rlyLinksText = r.links.join('\n');
+        rlyOut.innerHTML = highlightJSON(r.config);
+        rlyLinksOut.textContent = rlyLinksText;
+        rlyOutRemark.textContent = r.notes.join(' · ');
+        rlyOutSection.style.display = '';
+        btnCopyRly.innerHTML = '<span class="copy-icon">📋</span> Copy';
+        btnCopyRlyLinks.innerHTML = '<span class="copy-icon">📋</span> Copy';
+        rlySetHint('JSON را کپی کنید (v2rayNG: + ← Import config from clipboard). برچسب Host روی رله: ' + r.label, false);
+    }
+
+    btnRly.addEventListener('click', rlyBuild);
+    rlyInput.addEventListener('input', () => { rlyFilename.textContent = ''; onRlyInput(); });
+    rlyRelays.addEventListener('input', onRlyInput);
+    rlyClear.addEventListener('click', () => {
+        rlyInput.value = '';
+        rlyFilename.textContent = '';
+        rlyOutSection.style.display = 'none';
+        onRlyInput();
+        rlyInput.focus();
+    });
+    rlyFile.addEventListener('change', () => {
+        const f = rlyFile.files && rlyFile.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onload = () => { rlyInput.value = String(reader.result || ''); onRlyInput(); rlyFilename.textContent = f.name; };
+        reader.readAsText(f);
+        rlyFile.value = '';
+    });
+    btnCopyRly.addEventListener('click', () => copyTextWithFeedback(btnCopyRly, rlyOutputText, rlyHint));
+    btnCopyRlyLinks.addEventListener('click', () => copyTextWithFeedback(btnCopyRlyLinks, rlyLinksText, rlyHint));
+    btnDownloadRly.addEventListener('click', () => {
+        if (rlyOutputText) downloadText('iran-relay-config.json', rlyOutputText, 'application/json;charset=utf-8');
     });
 })();

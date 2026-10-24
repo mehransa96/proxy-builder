@@ -2072,6 +2072,20 @@ describe('VPN Config Fixer v8 (upgraded standalone fixer)', () => {
         ]);
     });
 
+    it('keeps XHTTP path / mode and fills Host from SNI on every clean-IP member', () => {
+        const link = 'vless://00000000-0000-4000-8000-000000000001@static.example.com:443?type=xhttp&path=%2Fapi&mode=packet-up&security=tls&sni=static.example.com&alpn=h2%2Chttp%2F1.1&fp=chrome#cdn';
+        const r = vcfFix(link, { cleanIps: '198.51.100.1' });
+        assert.ok(!r.error, r.error);
+        const lb = r.config.outbounds.filter(o => /^lb-\d+$/.test(o.tag));
+        assert.equal(lb.length, 4);
+        for (const o of lb) {
+            assert.equal(o.streamSettings.network, 'xhttp');
+            assert.deepEqual(o.streamSettings.xhttpSettings, { path: '/api', mode: 'packet-up', host: 'static.example.com' });
+            assert.equal(o.streamSettings.tlsSettings.serverName, 'static.example.com');
+        }
+        assert.equal(lb[2].settings.vnext[0].address, '198.51.100.1');
+    });
+
     it('multi-path: fragment / plain members per clean IP, unfragmented fallback, balancer', () => {
         const r = vcfFix(SINGLE, { cleanIps: '198.51.100.1\n198.51.100.2' });
         assert.ok(!r.error, r.error);
@@ -2206,5 +2220,70 @@ describe('Shadowsocks relay tab', () => {
         assert.equal(buildShadowsocksConfig(bad, { method: 'chacha20-ietf-poly1305' }).config.outbounds[0].settings.servers[0].method, 'chacha20-ietf-poly1305');
         assert.ok(ssSourceServers('vless://x@y:1').error);
         assert.ok(ssSourceServers('{"outbounds":[]}').error);
+    });
+});
+
+describe('Iran relay tab (WS + TLS through domestic relays)', () => {
+    const { buildRelayConfig, analyzeRelayInput, rlySource, rlyParseRelays } = pure;
+    const KNOWN = fs.readFileSync(path.join(__dirname, 'fixtures', 'known-good-iran-relay-ws.json'), 'utf8');
+    const UUID = '00000000-0000-4000-8000-000000000004';
+    const LINK = 'vless://' + UUID + '@nl.example.com:443?encryption=none&security=tls&sni=nl.example.com&fp=chrome&type=ws&host=nl.example.com&path=%2Fir%2Fdemo#NL-CDN';
+
+    it('rebuilds the known-good relay config byte for byte', () => {
+        const r = buildRelayConfig(KNOWN, {});
+        assert.ok(!r.error, r.error);
+        assert.equal(JSON.stringify(r.config), JSON.stringify(JSON.parse(KNOWN)));
+        assert.equal(r.links.length, 5);
+    });
+
+    it('classifies relay members (bare Host label) and the CDN origin', () => {
+        const s = rlySource(KNOWN);
+        assert.equal(s.relays.length, 4);
+        assert.equal(s.origins.length, 1);
+        assert.equal(s.origins[0].host, 's1.example.com');
+        assert.ok(analyzeRelayInput(KNOWN).items.some(i => /Relay member 203\.0\.113\.31/.test(i.msg)));
+    });
+
+    it('builds the relay layout from a plain panel link plus relay lines', () => {
+        const r = buildRelayConfig(LINK, { relays: 'r1.example.ir www.example.org\n203.0.113.31 www.example.org edge' });
+        assert.ok(!r.error, r.error);
+        const c = r.config;
+        const lb = c.outbounds.filter(o => /^lb-/.test(o.tag));
+        assert.deepEqual(lb.map(o => o.settings.vnext[0].address), ['r1.example.ir', '203.0.113.31']);
+        for (const o of lb) {
+            assert.equal(o.settings.vnext[0].users[0].id, UUID);
+            assert.deepEqual(o.streamSettings.wsSettings, { path: '/ir/demo', host: 'nl' });
+            assert.equal(o.streamSettings.tlsSettings.serverName, 'www.example.org');
+            assert.deepEqual(o.streamSettings.tlsSettings.alpn, ['h2']);
+        }
+        assert.deepEqual(lb.map(o => o.streamSettings.tlsSettings.fingerprint), ['chrome', 'edge']);
+        const fb = c.outbounds.find(o => o.tag === 'ecloud');
+        assert.equal(fb.settings.vnext[0].address, 'nl.example.com');
+        assert.deepEqual(fb.streamSettings.wsSettings, { path: '/ir/demo', host: 'nl.example.com' });
+        assert.equal(c.routing.balancers[0].fallbackTag, 'ecloud');
+        assert.equal(c.routing.balancers[0].strategy.settings.expected, 2);
+        assert.equal(c.burstObservatory.pingConfig.connectivity, 'https://snapp.ir');
+        assert.equal(c.dns.servers[0].address, '178.22.122.100');
+        assert.equal(c.dns.servers[1].address, '185.55.226.26');
+    });
+
+    it('accepts a full config exported from the panel and a custom label', () => {
+        const full = JSON.stringify({ outbounds: [
+            { tag: 'proxy', protocol: 'vless', settings: { vnext: [{ address: 'nl.example.com', port: 443, users: [{ id: UUID, encryption: 'none' }] }] },
+              streamSettings: { network: 'ws', security: 'tls', wsSettings: { path: '/ir/demo', headers: { Host: 'nl.example.com' } }, tlsSettings: { serverName: 'nl.example.com' } } },
+            { tag: 'direct', protocol: 'freedom' }
+        ] });
+        const r = buildRelayConfig(full, { relays: '203.0.113.31 www.example.org', label: 'S7', fallback: false });
+        assert.ok(!r.error, r.error);
+        assert.equal(r.config.outbounds[0].streamSettings.wsSettings.host, 's7');
+        assert.ok(!r.config.outbounds.some(o => o.tag === 'ecloud'));
+        assert.ok(!('fallbackTag' in r.config.routing.balancers[0]));
+    });
+
+    it('rejects other transports and missing relays with a clear message', () => {
+        assert.match(buildRelayConfig(LINK.replace('type=ws', 'type=xhttp'), { relays: '203.0.113.31 www.example.org' }).error, /WebSocket \+ TLS/);
+        assert.match(buildRelayConfig(LINK, {}).error, /relay server inside Iran/);
+        assert.match(buildRelayConfig(LINK, { relays: '203.0.113.31' }).error, /cover domain/);
+        assert.deepEqual(rlyParseRelays('a.example.ir, www.example.org | safari # note\n\n'), [{ address: 'a.example.ir', sni: 'www.example.org', fp: 'safari' }]);
     });
 });
