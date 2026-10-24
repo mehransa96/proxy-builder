@@ -38,7 +38,8 @@
 
         <!-- Main Tabs -->
         <nav class="main-tabs">
-            <button class="main-tab active" data-view="vcf">🛠️ VPN Fixer v8</button>
+            <button class="main-tab active" data-view="rly">🛰️ Iran Relay</button>
+            <button class="main-tab" data-view="vcf">🛠️ VPN Fixer v8</button>
             <button class="main-tab" data-view="ss">🔐 Shadowsocks</button>
             <button class="main-tab" data-view="templates">🧪 Templates</button>
             <button class="main-tab" data-view="fixer">🩺 Config Fixer</button>
@@ -478,6 +479,113 @@
                             می‌سنجد؛ مسیر اصلیِ بدون فرگمنت (همان که روی ایرانسل کار می‌کند) همیشه fallback است.</li>
                         <li>اگر آی‌پی یا دامنه‌ی سرور روی همراه اول کاملاً مسدود باشد، هیچ تنظیمی در کلاینت کمک نمی‌کند — آی‌پی تمیز،
                             دامنه‌ی جدید یا REALITY روی سرور لازم است.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+
+        <!-- ===== View: Iran Relay (WS + TLS via domestic relays) ===== -->
+        <div id="view-rly" dir="rtl" lang="fa" style="display:none;">
+            <div class="config-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span class="card-icon">🛰️</span>
+                        <div>
+                            <h2>Iran Relay — VLESS + WS + TLS</h2>
+                            <p class="card-hint">کانفیگ را به ساختار سه کانفیگی تبدیل می‌کند که روی همراه اول، ایرانسل و بقیه‌ی اپراتورها وصل‌اند:
+                                چند عضو VLESS + WebSocket + TLS که به <b>سرور(های) رله داخل ایران</b> وصل می‌شوند (هم با دامنه، هم با IP)،
+                                SNI یک دامنه‌ی پوششی، و Host یک برچسب کوتاه (مثل <code>s1</code>) که رله با آن سرور خارجی را انتخاب می‌کند؛
+                                به‌علاوه‌ی یک مسیر پشتیبان مستقیم از Cloudflare. کانفیگ کامل JSON (full config) یا لینک <code>vless://</code> پنل خودتان را بچسبانید یا فایلش را انتخاب کنید.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <textarea id="rly-input" class="config-input" dir="ltr"
+                        placeholder="Paste your full Xray JSON config { ... }&#10;— or vless:// links (one per line, or a base64 subscription)"
+                        spellcheck="false"></textarea>
+                    <button class="btn-clear" id="rly-clear" title="پاک کردن">✕</button>
+                </div>
+                <div class="vcf-toolbar">
+                    <label class="btn-subtle" for="rly-file">📂 انتخاب فایل</label>
+                    <input type="file" id="rly-file" accept=".txt,.json,.conf" hidden>
+                    <span class="vcf-filename" id="rly-filename"></span>
+                </div>
+                <div class="parsed-info" id="rly-info" dir="ltr"></div>
+            </div>
+
+            <div class="settings-card">
+                <h3 class="settings-title">⚙️ تنظیمات رله</h3>
+                <div class="settings-grid">
+                    <div class="setting-item setting-item-wide">
+                        <label for="rly-relays">رله‌های داخل ایران — هر خط: <code>آدرس  دامنه‌ی‌پوششی(SNI)  [fingerprint]</code> (خالی = همان‌هایی که در کانفیگ هست)</label>
+                        <textarea id="rly-relays" class="setting-textarea" rows="4" dir="ltr" spellcheck="false"
+                            placeholder="relay1.example.ir  www.example.org&#10;203.0.113.31  www.example.org  safari"></textarea>
+                    </div>
+                    <div class="setting-item">
+                        <label for="rly-label">برچسب سرور خارجی (Host) — خالی = خودکار</label>
+                        <input type="text" id="rly-label" dir="ltr" spellcheck="false" placeholder="nl">
+                    </div>
+                    <div class="setting-item">
+                        <label for="rly-alpn">ALPN</label>
+                        <select id="rly-alpn" dir="ltr">
+                            <option value="h2" selected>h2 (مثل کانفیگ‌های سالم)</option>
+                            <option value="h2,http/1.1">h2, http/1.1</option>
+                            <option value="http/1.1">http/1.1</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="rly-remarks">نام کانفیگ — خالی = همان قبلی</label>
+                        <input type="text" id="rly-remarks" spellcheck="false" placeholder="NL Relay">
+                    </div>
+                    <div class="setting-item setting-item-wide">
+                        <label for="rly-ir">دامنه‌های اضافه که مستقیم (بدون VPN) بروند</label>
+                        <textarea id="rly-ir" class="setting-textarea" rows="2" dir="ltr" spellcheck="false">gapgpt.app
+aparat.com</textarea>
+                    </div>
+                    <div class="setting-item fixer-checks">
+                        <label><input type="checkbox" id="rly-fallback" checked> مسیر پشتیبان مستقیم از Cloudflare (ecloud)</label>
+                        <label><input type="checkbox" id="rly-fp" checked> fingerprint متفاوت برای هر عضو (chrome / safari / edge)</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="generate-section">
+                <button class="btn-generate" id="btn-rly" disabled>
+                    <span class="btn-icon">🛰️</span> ساخت کانفیگ رله
+                </button>
+                <p class="generate-hint" id="rly-hint">اول کانفیگ یا لینک را بچسبانید</p>
+            </div>
+
+            <div class="output-section" id="rly-output-section" style="display:none;">
+                <div class="output-header">
+                    <h3>📋 کانفیگ نهایی</h3>
+                    <div class="output-actions">
+                        <button class="btn-copy" id="btn-copy-rly" title="Copy to clipboard">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                        <button class="btn-download" id="btn-download-rly" title="Download as .json">
+                            <span class="download-icon">💾</span> .json
+                        </button>
+                        <button class="btn-copy" id="btn-copy-rly-links" title="Copy vless:// links">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                    </div>
+                </div>
+                <div class="output-remark" id="rly-output-remark" dir="ltr"></div>
+                <pre class="output-code" dir="ltr"><code id="rly-links"></code></pre>
+                <pre class="output-code" dir="ltr"><code id="rly-output"></code></pre>
+            </div>
+
+            <details class="info-section">
+                <summary>ℹ️ چرا این کانفیگ‌ها روی همه‌ی اپراتورها وصل‌اند</summary>
+                <div class="info-content">
+                    <ul>
+                        <li><strong>گوشی فقط به سرور داخل ایران وصل می‌شود.</strong> آدرس‌های اصلی دو سرور در دیتاسنترهای تهران‌اند؛ ترافیک داخلی از فیلتر بین‌الملل عبور نمی‌کند. رله ترافیک را به سرور خارجی می‌فرستد.</li>
+                        <li><strong>TLS با دامنه‌ی پوششی.</strong> SNI یک دامنه‌ی بی‌ربط است که گواهی‌اش روی رله نصب است؛ ALPN فقط <code>h2</code> و fingerprint هر عضو فرق دارد.</li>
+                        <li><strong>Host کوتاه = انتخاب سرور خارجی.</strong> <code>s1</code>، <code>s3</code>، <code>s5</code> روی رله به سرور هلند / آلمان / آمریکا نگاشت می‌شوند؛ مسیر و UUID برای همه یکی است.</li>
+                        <li><strong>بدون fragment.</strong> چون مقصد داخلی است، تکه‌تکه کردن لازم نیست.</li>
+                        <li><strong>انتخاب خودکار.</strong> balancer از نوع leastLoad با پینگ دقیقه‌ای؛ اگر همه‌ی رله‌ها قطع باشند، مسیر <code>ecloud</code> مستقیم از Cloudflare به سرور خارجی می‌رود.</li>
+                        <li><strong>DNS داخلی.</strong> شکن و بگذر برای دامنه‌های ایرانی، UDP 443 (QUIC) مسدود، تبلیغات مسدود، ترافیک ایران مستقیم.</li>
                     </ul>
                 </div>
             </details>

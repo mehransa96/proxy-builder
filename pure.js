@@ -2451,6 +2451,14 @@ function vcfFix(raw, opts) {
         }
         if (!ws.path) { ws.path = '/'; note('fix', 'path = /'); }
     }
+    if (ss.network === 'xhttp' || ss.network === 'splithttp') {
+        const xs = ss.xhttpSettings || ss.splithttpSettings || (ss.xhttpSettings = {});
+        if (!xs.host && isTls && ss.tlsSettings.serverName) {
+            xs.host = ss.tlsSettings.serverName;
+            note('fix', 'host = ' + xs.host, 'CDN بر اساس Host مسیریابی می‌کند');
+        }
+        if (!xs.path) { xs.path = '/'; note('fix', 'path = /'); }
+    }
     if (ss.network === 'grpc' && ss.grpcSettings) {
         if (!ss.grpcSettings.serviceName) note('warn', 'serviceName در gRPC خالی است', 'باید با مقدار سمت سرور یکی باشد');
         if (isTls && ss.tlsSettings.serverName && !ss.grpcSettings.authority) ss.grpcSettings.authority = ss.tlsSettings.serverName;
@@ -2804,6 +2812,228 @@ function buildShadowsocksConfig(raw, opts) {
     return { config: ordered, json: JSON.stringify(ordered, null, 2), links: servers.map(ssLink), notes };
 }
 
+// ===== Iran Relay tab (WS + TLS through domestic relays) =====
+// Taken from three configs that connect on every Iranian network. Each one
+// has four VLESS + WebSocket + TLS members pointing at two relay servers in
+// Tehran (each by hostname and by bare IP). The SNI is a cover domain whose
+// certificate lives on the relay, and the WebSocket Host is a short label
+// (s1 / s3 / s5) that tells the relay which foreign exit to forward to. A
+// fifth outbound reaches the foreign server directly through Cloudflare and
+// is the balancer's fallback. No fragment; fingerprints vary per member;
+// ALPN offers h2 only; Shecan + Begzar resolve Iranian domains.
+const RLY_FP_POOL = ['chrome', 'chrome', 'safari', 'edge'];
+const RLY_IR_EXTRA = ['gapgpt.app', 'aparat.com'];
+const RLY_DEFAULTS = { relays: '', label: '', fallback: true, fpRotate: true, alpn: 'h2', irDomains: RLY_IR_EXTRA.join('\n'), remarks: '', connectivity: 'https://snapp.ir' };
+
+function rlyLabel(host) {
+    const h = String(host || '').trim();
+    if (!h || isIpAddress(h)) return '';
+    return h.split('.')[0].toLowerCase();
+}
+
+// One VLESS endpoint from a full-config outbound or a vless:// link.
+function rlyEndpoint(e) {
+    const isRelay = !!e.host && !e.host.includes('.');
+    return Object.assign(e, { role: isRelay ? 'relay' : 'origin' });
+}
+
+// Accepts a full JSON config (or array of them), vless:// links one per line,
+// or a base64 subscription of such links. Returns
+// { origins, relays, remarks } or { error }. A member whose WebSocket Host is
+// a bare label (no dot) is a relay member, as in the working configs;
+// anything else is the origin (your foreign server behind the CDN).
+function rlySource(raw) {
+    let text = String(raw || '').trim();
+    if (!text) return { error: 'Paste your config (full JSON or vless:// links)' };
+    const eps = [];
+    let remarks = '';
+    if (looksLikeJsonConfig(text)) {
+        const parsed = parseFullConfigJson(text);
+        if (parsed.error) return parsed;
+        parsed.configs.forEach(cfg => {
+            if (!remarks && cfg.remarks) remarks = String(cfg.remarks);
+            cfg.outbounds.filter(o => o && o.protocol === 'vless').forEach(ob => {
+                const v = (ob.settings && Array.isArray(ob.settings.vnext) && ob.settings.vnext[0]) || {};
+                const u = (Array.isArray(v.users) && v.users[0]) || {};
+                const ss = ob.streamSettings || {};
+                const ws = ss.wsSettings || {};
+                const tls = ss.tlsSettings || {};
+                eps.push(rlyEndpoint({
+                    address: String(v.address || ''), port: Number(v.port) || 443, uuid: String(u.id || ''),
+                    network: ss.network || 'tcp', security: ss.security || 'none',
+                    path: ws.path || '', host: String(ws.host || (ws.headers && (ws.headers.Host || ws.headers.host)) || ''),
+                    sni: String(tls.serverName || ''), fp: String(tls.fingerprint || ''), tag: String(ob.tag || '')
+                }));
+            });
+        });
+    } else {
+        if (!text.includes('://')) {
+            const dec = safeAtob(text.replace(/\s+/g, ''));
+            if (dec && dec.includes('://')) text = dec.trim();
+        }
+        for (const line of text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)) {
+            if (!/^vless:\/\//i.test(line)) return { error: 'Only VLESS links are supported here: ' + truncateStr(line, 40) };
+            const p = parseVless(line);
+            if (p.error) return p;
+            if (!remarks && p.remark) remarks = p.remark;
+            eps.push(rlyEndpoint({
+                address: p.server, port: p.port || 443, uuid: p.uuid, network: p.type || 'tcp', security: p.security || 'none',
+                path: p.path || '', host: p.host || '', sni: p.sni || '', fp: p.fp || '', tag: ''
+            }));
+        }
+    }
+    if (!eps.length) return { error: 'No VLESS outbound found' };
+    const bad = eps.find(e => e.network !== 'ws' || e.security !== 'tls');
+    if (bad) return { error: 'This method needs VLESS + WebSocket + TLS; found ' + bad.network + ' + ' + bad.security + ' on ' + bad.address + '. Build the inbound as in the guide (Transmission = WebSocket, Security = TLS).' };
+    return {
+        origins: eps.filter(e => e.role === 'origin'),
+        relays: eps.filter(e => e.role === 'relay'),
+        remarks
+    };
+}
+
+// "address  sni  [fingerprint]" per line (space, comma or | separated).
+function rlyParseRelays(text) {
+    const out = [];
+    String(text || '').split(/\r?\n/).forEach(l => {
+        const parts = l.replace(/#.*/, '').trim().split(/[\s,|]+/).filter(Boolean);
+        if (!parts.length) return;
+        out.push({ address: parts[0], sni: parts[1] || '', fp: parts[2] || '' });
+    });
+    return out;
+}
+
+function rlyVlessLink(m, remark) {
+    const q = new URLSearchParams({ encryption: 'none', security: 'tls', sni: m.sni, alpn: m.alpn.join(','), fp: m.fp, type: 'ws', host: m.host, path: m.path });
+    const host = String(m.address).includes(':') ? '[' + m.address + ']' : m.address;
+    return 'vless://' + m.uuid + '@' + host + ':' + m.port + '?' + q.toString() + '#' + encodeURIComponent(remark);
+}
+
+// opts: see RLY_DEFAULTS. relays: text for rlyParseRelays (empty → keep the
+// relay members found in the input). Returns { config, json, links, notes } or { error }.
+function buildRelayConfig(raw, opts) {
+    const o = Object.assign({}, RLY_DEFAULTS, opts || {});
+    const src = rlySource(raw);
+    if (src.error) return src;
+    const notes = [];
+    const origin = src.origins[0] || null;
+    const ref = origin || src.relays[0];
+    if (!ref.uuid) return { error: 'The VLESS user id (UUID) is empty' };
+    const path = ref.path || '/';
+    const label = String(o.label || '').trim().toLowerCase() || (src.relays[0] && src.relays[0].host) || rlyLabel(origin && (origin.host || origin.sni));
+    if (!label) return { error: 'Enter the exit label (the WebSocket Host the relay routes by, e.g. s1)' };
+    let relays = rlyParseRelays(o.relays);
+    if (!relays.length) relays = src.relays.map(r => ({ address: r.address, sni: r.sni, fp: r.fp }));
+    if (!relays.length) return { error: 'Add at least one relay server inside Iran: "address cover-domain" per line' };
+    const noSni = relays.find(r => !r.sni);
+    if (noSni) return { error: 'Relay ' + noSni.address + ' needs a cover domain (SNI) with a certificate on the relay' };
+    const alpn = o.alpn === 'http/1.1' ? ['http/1.1'] : o.alpn === 'h2,http/1.1' ? ['h2', 'http/1.1'] : ['h2'];
+    const base = { uuid: ref.uuid, port: 443, path, alpn };
+    const members = relays.map((r, i) => Object.assign({}, base, {
+        tag: 'lb-' + i, address: r.address, sni: r.sni, host: label,
+        fp: r.fp || (o.fpRotate ? RLY_FP_POOL[i % RLY_FP_POOL.length] : 'chrome')
+    }));
+    const fallback = o.fallback && origin ? Object.assign({}, base, {
+        tag: 'ecloud', address: origin.address, port: origin.port || 443, sni: origin.sni || origin.host,
+        host: origin.host || origin.sni, path: origin.path || path, fp: origin.fp || 'chrome'
+    }) : null;
+    if (o.fallback && !origin) notes.push('no direct (CDN) server in the input, so no fallback outbound');
+    if (src.relays.length && !o.relays) notes.push('kept ' + relays.length + ' relay member(s) from the input');
+    if (origin && origin.path && src.relays[0] && src.relays[0].path && origin.path !== src.relays[0].path) notes.push('relay path ' + src.relays[0].path + ' differs from the origin path ' + origin.path + '; using ' + path);
+
+    const outbound = m => ({
+        tag: m.tag,
+        protocol: 'vless',
+        settings: { vnext: [{ address: m.address, port: m.port, users: [{ id: m.uuid, level: 8, encryption: 'none' }] }] },
+        streamSettings: {
+            network: 'ws', security: 'tls',
+            wsSettings: { path: m.path, host: m.host },
+            tlsSettings: { serverName: m.sni, alpn: m.alpn.slice(), fingerprint: m.fp }
+        }
+    });
+    const extra = String(o.irDomains || '').split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+    const irList = ['domain:ir', 'domain:xn--mgba3a4f16a'].concat(extra.filter(d => d !== 'domain:ir' && d !== 'domain:xn--mgba3a4f16a'));
+    const all = members.concat(fallback ? [fallback] : []);
+    const cfg = {
+        remarks: o.remarks || src.remarks || ('Relay ' + label),
+        log: { loglevel: 'error' },
+        dns: {
+            tag: 'dns',
+            queryStrategy: 'UseIPv4',
+            servers: [
+                { address: FIXER_DOMESTIC_DNS[0], domains: irList.slice(), expectIPs: ['geoip:ir'], skipFallback: true, tag: 'domestic-dns' },
+                { address: FIXER_DOMESTIC_DNS[1], domains: irList.slice(), skipFallback: true, tag: 'domestic-dns-2' },
+                '1.1.1.1',
+                '8.8.8.8'
+            ]
+        },
+        inbounds: [{
+            tag: 'socks', listen: '127.0.0.1', port: 10808, protocol: 'socks',
+            settings: { auth: 'noauth', udp: true, userLevel: 8 },
+            sniffing: { enabled: true, destOverride: ['http', 'tls', 'quic'], routeOnly: true }
+        }],
+        outbounds: all.map(outbound).concat([
+            { tag: 'direct', protocol: 'freedom', streamSettings: { sockopt: { domainStrategy: 'UseIP' } } },
+            { tag: 'block', protocol: 'blackhole' },
+            { tag: 'dns-out', protocol: 'dns' }
+        ]),
+        policy: {
+            levels: { 8: { connIdle: 300, handshake: 3, uplinkOnly: 2, downlinkOnly: 4 } },
+            system: { statsOutboundUplink: true, statsOutboundDownlink: true }
+        },
+        routing: {
+            domainStrategy: 'IPIfNonMatch',
+            rules: [
+                { type: 'field', inboundTag: ['domestic-dns', 'domestic-dns-2'], outboundTag: 'direct' },
+                { type: 'field', inboundTag: ['dns'], balancerTag: 'auto' },
+                { type: 'field', port: '53', outboundTag: 'dns-out' },
+                { type: 'field', domain: ['geosite:category-ads-all'], outboundTag: 'block' },
+                { type: 'field', network: 'udp', port: '443', outboundTag: 'block' },
+                { type: 'field', ip: ['geoip:private'], outboundTag: 'direct' },
+                { type: 'field', domain: ['geosite:private'], outboundTag: 'direct' },
+                { type: 'field', ip: ['geoip:ir'], outboundTag: 'direct' },
+                { type: 'field', domain: irList.slice(), outboundTag: 'direct' },
+                { type: 'field', port: '0-65535', balancerTag: 'auto' }
+            ],
+            balancers: [Object.assign(
+                { tag: 'auto', selector: ['lb-'], strategy: { type: 'leastLoad', settings: { expected: Math.min(4, members.length) } } },
+                fallback ? { fallbackTag: 'ecloud' } : {}
+            )]
+        },
+        stats: {},
+        burstObservatory: {
+            subjectSelector: ['lb-'],
+            pingConfig: {
+                destination: 'http://www.gstatic.com/generate_204', interval: '1m', sampling: 2, timeout: '8s',
+                httpMethod: 'GET', connectivity: o.connectivity || 'https://snapp.ir'
+            }
+        }
+    };
+    notes.push(members.length + ' relay member(s) behind a leastLoad balancer' + (fallback ? ', CDN fallback ' + fallback.address : ''));
+    notes.push('exit label (WebSocket Host) = ' + label);
+    const links = all.map(m => rlyVlessLink(m, cfg.remarks + ' · ' + (m.tag === 'ecloud' ? 'CDN' : m.address)));
+    return { config: cfg, json: JSON.stringify(cfg, null, 2), links, notes, label };
+}
+
+// Findings for the input panel: [{ level, msg }].
+function analyzeRelayInput(raw) {
+    const src = rlySource(raw);
+    if (src.error) return src;
+    const items = [];
+    const add = (level, msg) => items.push({ level, msg });
+    src.origins.forEach(e => {
+        add('ok', 'Direct server ' + e.address + ':' + e.port + ' — Host ' + (e.host || '(empty)') + ', SNI ' + (e.sni || '(empty)') + ', path ' + (e.path || '/') + '. Used as the CDN fallback and as the source of UUID and path.');
+        if (!e.host) add('warn', e.address + ': WebSocket Host is empty — set it to your CDN subdomain in the panel.');
+        if (isIpAddress(e.address) && !e.sni) add('error', e.address + ': address is an IP and SNI is empty — TLS cannot reach your domain.');
+    });
+    src.relays.forEach(e => add('ok', 'Relay member ' + e.address + ' — SNI ' + e.sni + ', exit label ' + e.host + ', fingerprint ' + (e.fp || 'chrome') + '.'));
+    if (!src.relays.length) add('info', 'No relay members yet. Add your server(s) inside Iran under "Relays" below: one line per address, then the cover domain (SNI).');
+    const ids = Array.from(new Set(src.origins.concat(src.relays).map(e => e.uuid)));
+    if (ids.length > 1) add('warn', 'Different UUIDs in the input; the first one is used for every member.');
+    add('info', 'Why it works: the phone only talks to servers inside Iran (domestic traffic is not filtered); the relay forwards to your foreign server.');
+    return { items, origins: src.origins.length, relays: src.relays.map(r => r.address + ' ' + r.sni + ' ' + (r.fp || '')) };
+}
+
 // Node test harness: browsers ignore this block (`module` is undefined there).
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -2817,6 +3047,7 @@ if (typeof module !== 'undefined' && module.exports) {
         diagnoseFullConfig, fixFullConfigCore, buildFixTestPack, linkToFullConfig,
         FIXER_DOMESTIC_DNS, TEMPLATE_A_FRAGMENT, buildTemplateA, buildTemplateB, describeConfigTechniques,
         SS_AEAD_METHODS, ssSourceServers, ssParsePins, analyzeShadowsocks, ssLink, buildShadowsocksConfig,
+        RLY_DEFAULTS, RLY_FP_POOL, rlySource, rlyParseRelays, buildRelayConfig, analyzeRelayInput,
         VCF_FRAGMENT, VCF_DEFAULTS, vcfList, vcfParseServers, vcfFix, vcfMemberPack,
         parseProxyURLSingle, parseProxyURL, parseVless, parseVmess, parseTrojan, parseShadowsocks, parseSocks, parseHttp,
         buildStreamSettings, buildProxyOutbound, buildChainOutbound, buildSingboxOutbound,

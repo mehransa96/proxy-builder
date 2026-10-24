@@ -2,21 +2,26 @@
 
 🌐 **[فارسی](README-fa.md)** | [English](README.md)
 
-A powerful, standalone web application with seven tools:
+A powerful, standalone web application with eight tools:
 
-1. **🛠️ VPN Fixer v8** (default tab) — the upgraded standalone VPN Config Fixer: one config whose balancer tries several routes at once (TLS fragment / no fragment, clean CDN IPs, several fingerprints) and keeps the one that works on the current network, with the original route as fallback.
-2. **🔐 Shadowsocks** — rebuild a Shadowsocks config (JSON or `ss://` links) in the layout of configs that connect on every Iranian network: plain AEAD Shadowsocks to a relay server inside Iran, its domain pinned in `dns.hosts`; several relays become one balancer.
-3. **🧪 Templates** — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
-4. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
-5. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
-6. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
-7. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
+1. **🛰️ Iran Relay** (default tab) — rebuild your VLESS + WebSocket + TLS config (full JSON, `vless://` links or a file) in the layout of three configs that connect on every Iranian network: balancer members that reach relay servers **inside Iran** (by hostname and by IP) with a cover-domain SNI and a short Host label choosing the foreign exit, plus a direct Cloudflare route as fallback.
+2. **🛠️ VPN Fixer v8** — the upgraded standalone VPN Config Fixer: one config whose balancer tries several routes at once (TLS fragment / no fragment, clean CDN IPs, several fingerprints) and keeps the one that works on the current network, with the original route as fallback.
+3. **🔐 Shadowsocks** — rebuild a Shadowsocks config (JSON or `ss://` links) in the layout of configs that connect on every Iranian network: plain AEAD Shadowsocks to a relay server inside Iran, its domain pinned in `dns.hosts`; several relays become one balancer.
+4. **🧪 Templates** — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
+5. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
+6. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
+7. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
+8. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
 
 All processing happens in your browser. No data is sent to any server — fetching a subscription link contacts only the provider URL you entered, and pasted or dropped content never leaves your browser.
 
 ## 🚀 Features
 
-### 🛠️ VPN Fixer v8 (default tab)
+### 🛰️ Iran Relay (default tab)
+- **Import**: paste or pick a file — a full Xray JSON config exported from your panel or client, `vless://` links (one per line) or a base64 subscription. A member whose WebSocket Host is a bare label (`s1`) is read as a relay member; anything else is your foreign server behind the CDN (UUID, path and fallback come from it).
+- **Build**: the exact layout of the working configs (round-trip tested byte for byte) — one `lb-N` member per relay line (`address  cover-domain  [fingerprint]`), WebSocket Host = exit label, ALPN `h2`, rotating chrome / safari / edge fingerprints, no fragment; `leastLoad` balancer + `burstObservatory` (connectivity `snapp.ir`) with the CDN route `ecloud` as fallback; Shecan + Begzar for Iranian domains, UDP 443 and ads blocked, Iranian traffic direct. Also outputs one `vless://` link per member.
+
+### 🛠️ VPN Fixer v8
 - **Same pipeline as the standalone v7 page**, now inside the app: panel domain → connection domain swap, stale CDN pins and IPv6 removed from `dns.hosts`, `UseIPv4`, SNI / ws Host filled in (`headers.Host` → `host`), policy timings, `freedom` / sniffing clean-up, history of the last five fixes. No personal domains are built in: your panel → connection domain list is stored on your device only.
 - **Fragment kept, not stripped**: v7 deleted every `finalmask`. v8 adds the fragment from a config that connects on MCI (`1-3 · 50-100 · 10-20 · maxSplit 10`, Xray-core 26+), keeps the config's own, or strips it — your choice.
 - **Multi-path (recommended)**: one balancer member per clean IP / address, each with and without the fragment and with chrome / edge / firefox / safari fingerprints. SNI and Host stay on your domain. `leastLoad` + `burstObservatory` pick the healthy routes every minute; the original unfragmented route is the fallback, so the same config keeps working where it already did.
@@ -91,8 +96,14 @@ This ensures that your final outgoing IP address is that of the **Chain Proxy**,
 
 For full clipboard support, serve this folder locally — e.g. `python3 -m http.server` or `npx serve` — then open via `http://localhost:PORT` (or HTTPS); opening the file directly (`file://`) falls back to manual copy.
 
+### 🛰️ Iran Relay
+1. Open the app — the **Iran Relay** tab is active by default.
+2. Paste your panel's `vless://` link (VLESS + WS + TLS behind Cloudflare) or full JSON config, or pick the file.
+3. Under the relay options, enter one line per relay server inside Iran: its address (hostname or IP) and the cover domain whose certificate the relay serves. Leave the exit label empty to use the first part of your CDN subdomain.
+4. Press **ساخت کانفیگ رله** and import the JSON in v2rayNG (**+ → Import config from clipboard**). The relay must map that label to your foreign server — see the 3x-ui relay guide.
+
 ### 🛠️ VPN Fixer v8
-1. Open the app — the **VPN Fixer v8** tab is active by default.
+1. Switch to the **VPN Fixer v8** tab.
 2. Paste your full JSON config (or a link), or pick a file.
 3. Add a few clean IPs if your server is behind a CDN (the most useful option for MCI), keep **multi-path** and the **known-good fragment**, and press **اصلاح کانفیگ**.
 4. Copy the result and in v2rayNG use **+ → Import config from clipboard**. If it still fails, download the **test pack** and test each route on its own.
@@ -134,7 +145,7 @@ For full clipboard support, serve this folder locally — e.g. `python3 -m http.
 - **Android**: use [PattNG](https://github.com/patterniha/PattNG).
 
 ### 🔗 Chain Builder
-1. **Config 1**: Paste your first proxy URL (this can be a Cloudflare Worker, CDN, or any other proxy).
+9. **Config 1**: Paste your first proxy URL (this can be a Cloudflare Worker, CDN, or any other proxy).
 2. **Config 2**: Paste your second proxy URL (the one you want to chain through).
    - For **SSH**, click the 🔑 SSH toggle and fill in server, port, username, and password.
 3. **Settings**: Adjust DNS servers or SOCKS ports if needed.

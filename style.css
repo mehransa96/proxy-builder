@@ -1314,11 +1314,15 @@ body {
 @media (max-width: 700px) { .main-tab { flex: 1 1 30%; padding: 10px 8px; font-size: 0.8rem; } }
 
 /* ===== VPN Config Fixer v8 ===== */
-#view-vcf { text-align: right; }
-#view-vcf pre, #view-vcf [dir="ltr"] { text-align: left; }
-#view-vcf .card-hint, #view-vcf label, #view-vcf .info-content { line-height: 1.8; }
-#view-vcf .settings-title, #view-vcf h2, #view-vcf h3 { text-align: right; }
-#view-vcf select, #view-vcf .setting-textarea { width: 100%; }
+#view-vcf, #view-rly { text-align: right; }
+#view-vcf pre, #view-vcf [dir="ltr"],
+#view-rly pre, #view-rly [dir="ltr"] { text-align: left; }
+#view-vcf .card-hint, #view-vcf label, #view-vcf .info-content,
+#view-rly .card-hint, #view-rly label, #view-rly .info-content { line-height: 1.8; }
+#view-vcf .settings-title, #view-vcf h2, #view-vcf h3,
+#view-rly .settings-title, #view-rly h2, #view-rly h3 { text-align: right; }
+#view-vcf select, #view-vcf .setting-textarea,
+#view-rly select, #view-rly .setting-textarea { width: 100%; }
 .vcf-ver { font-size: 0.7em; color: #34d399; border: 1px solid #34d399; border-radius: 999px; padding: 0 8px; margin-inline-start: 6px; }
 .vcf-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 .vcf-toolbar label.btn-subtle { cursor: pointer; }
