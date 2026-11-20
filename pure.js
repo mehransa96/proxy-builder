@@ -3034,6 +3034,161 @@ function analyzeRelayInput(raw) {
     return { items, origins: src.origins.length, relays: src.relays.map(r => r.address + ' ' + r.sni + ' ' + (r.fp || '')) };
 }
 
+// ===== XHTTP + REALITY stability fixer (tab "xsf") =====
+// Rules for client configs that ping but drop mid-use (VLESS + XHTTP + REALITY
+// exported from v2rayNG). Each rule only touches what it names; the rest of
+// the config is passed through. Several configs can be pasted at once: a JSON
+// array, or objects one after another (blank lines / files glued together).
+const XSF_MODES = ['packet-up', 'stream-up', 'stream-one', 'keep'];
+const XSF_POLICY = { handshake: 8, connIdle: 300, uplinkOnly: 2, downlinkOnly: 5 };
+const XSF_DEFAULTS = { mode: 'packet-up', policy: true, dropFragment: true, dropNoise: true, fakedns: true, mux: true };
+
+// Split text holding one or more JSON values ({..}{..} or [..]) at top level.
+function xsfSplitConfigs(raw) {
+    const text = String(raw || '').replace(/^﻿/, '');
+    const chunks = [];
+    let depth = 0, start = -1, inStr = false, esc = false;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inStr) {
+            if (esc) esc = false;
+            else if (c === '\\') esc = true;
+            else if (c === '"') inStr = false;
+            continue;
+        }
+        if (c === '"') { inStr = true; continue; }
+        if (c === '{' || c === '[') { if (depth === 0) start = i; depth++; }
+        else if (c === '}' || c === ']') {
+            depth--;
+            if (depth === 0 && start >= 0) { chunks.push(text.slice(start, i + 1)); start = -1; }
+            if (depth < 0) return { error: 'Unbalanced brackets in the pasted text' };
+        }
+    }
+    if (depth !== 0) return { error: 'The pasted text ends in the middle of a JSON config (missing } or ])' };
+    if (!chunks.length) return { error: 'No JSON config found — paste the full config { ... } (v2rayNG: Share → Export full configuration)' };
+    const configs = [];
+    for (let n = 0; n < chunks.length; n++) {
+        let v;
+        try { v = JSON.parse(chunks[n]); } catch (e) { return { error: 'Config #' + (n + 1) + ' is not valid JSON: ' + e.message }; }
+        (Array.isArray(v) ? v : [v]).forEach(c => configs.push(c));
+    }
+    for (let n = 0; n < configs.length; n++) {
+        const c = configs[n];
+        if (!c || typeof c !== 'object' || Array.isArray(c) || !Array.isArray(c.outbounds)) {
+            return { error: 'Config #' + (n + 1) + ' is not an Xray config (no "outbounds" array)' };
+        }
+    }
+    return { configs };
+}
+
+function xsfUsesFakedns(cfg) {
+    if (cfg.fakedns) return true;
+    const servers = (cfg.dns && Array.isArray(cfg.dns.servers)) ? cfg.dns.servers : [];
+    return servers.some(s => (typeof s === 'string' ? s : (s && s.address)) === 'fakedns');
+}
+
+// A transport whose packets are UDP: only there does finalmask udp noise apply.
+function xsfIsUdpTransport(ss) {
+    const net = String(ss.network || 'tcp').toLowerCase();
+    if (['kcp', 'mkcp', 'quic', 'hysteria', 'hysteria2'].includes(net)) return true;
+    if (net === 'xhttp' || net === 'splithttp') {
+        const alpn = (ss.tlsSettings && ss.tlsSettings.alpn) || [];
+        return (Array.isArray(alpn) ? alpn : [alpn]).includes('h3');
+    }
+    return false;
+}
+
+function xsfFixOne(input, opts) {
+    const o = Object.assign({}, XSF_DEFAULTS, opts || {});
+    const cfg = cloneJson(input);
+    const changes = [];
+    const proxies = cfg.outbounds.filter(ob => ob && ['vless', 'vmess', 'trojan'].includes(ob.protocol));
+
+    proxies.forEach(ob => {
+        const tag = ob.tag || ob.protocol;
+        const ss = ob.streamSettings;
+        if (!ss || typeof ss !== 'object') return;
+        const net = String(ss.network || 'tcp').toLowerCase();
+        const isXhttp = net === 'xhttp' || net === 'splithttp';
+        const fm = ss.finalmask;
+        if (fm && typeof fm === 'object') {
+            if (o.dropFragment && ss.security === 'reality' && Array.isArray(fm.tcp)) {
+                const keep = fm.tcp.filter(m => !(m && m.type === 'fragment'));
+                if (keep.length !== fm.tcp.length) {
+                    if (keep.length) fm.tcp = keep; else delete fm.tcp;
+                    changes.push({ rule: 'fragment', tag, msg: 'Removed finalmask TCP fragment — REALITY already hides the SNI; splitting every new XHTTP connection into up to 10 delayed pieces makes it slow and unstable' });
+                }
+            }
+            if (o.dropNoise && fm.udp && !xsfIsUdpTransport(ss)) {
+                delete fm.udp;
+                changes.push({ rule: 'noise', tag, msg: 'Removed finalmask UDP noise — this outbound is TCP (' + net + '), the noise never applied' });
+            }
+            if (!Object.keys(fm).length) delete ss.finalmask;
+        }
+        if (isXhttp) {
+            const key = ss.xhttpSettings ? 'xhttpSettings' : (ss.splithttpSettings ? 'splithttpSettings' : 'xhttpSettings');
+            const xs = ss[key] = ss[key] || {};
+            let extra = xs.extra;
+            if (typeof extra === 'string') { try { extra = JSON.parse(extra); } catch (e) { extra = null; } }
+            const extraMode = extra && typeof extra === 'object' ? extra.mode : undefined;
+            const before = xs.mode || extraMode || 'auto';
+            if (extra && typeof extra === 'object' && 'mode' in extra) {
+                delete extra.mode;
+                if (Object.keys(extra).length) xs.extra = extra; else delete xs.extra;
+                changes.push({ rule: 'extra-mode', tag, msg: 'Removed the duplicate "mode" inside xhttpSettings.extra' });
+            }
+            if (o.mode !== 'keep' && before !== o.mode) {
+                xs.mode = o.mode;
+                changes.push({ rule: 'mode', tag, msg: 'XHTTP mode ' + before + ' → ' + o.mode + (before === 'auto' && ss.security === 'reality' ? ' (auto picks stream-one with REALITY, which Iranian networks cut quickly)' : '') });
+            } else if (o.mode === 'keep' && !xs.mode && extraMode) {
+                xs.mode = extraMode;
+            }
+        }
+        if (o.mux && isXhttp && ob.mux && ob.mux.enabled) {
+            ob.mux = { enabled: false, concurrency: -1 };
+            changes.push({ rule: 'mux', tag, msg: 'Disabled mux.cool — XHTTP multiplexes by itself (xmux); both together stall' });
+        }
+    });
+
+    if (o.policy && cfg.policy && cfg.policy.levels && typeof cfg.policy.levels === 'object') {
+        Object.keys(cfg.policy.levels).forEach(lv => {
+            const p = cfg.policy.levels[lv];
+            if (!p || typeof p !== 'object') return;
+            const fixed = [];
+            [['uplinkOnly', XSF_POLICY.uplinkOnly], ['downlinkOnly', XSF_POLICY.downlinkOnly], ['handshake', XSF_POLICY.handshake], ['connIdle', XSF_POLICY.connIdle]].forEach(([k, min]) => {
+                if (k in p && Number(p[k]) < min) { fixed.push(k + ' ' + p[k] + '→' + min); p[k] = min; }
+            });
+            if (fixed.length) changes.push({ rule: 'policy', tag: 'policy level ' + lv, msg: 'Policy timeouts raised (' + fixed.join(', ') + ') — with 1 s Xray closes the other direction one second after either side finishes, which cuts downloads and streams on XHTTP' });
+        });
+    }
+
+    if (o.fakedns && !xsfUsesFakedns(cfg)) {
+        (cfg.inbounds || []).forEach(ib => {
+            const sn = ib && ib.sniffing;
+            if (sn && Array.isArray(sn.destOverride) && sn.destOverride.includes('fakedns')) {
+                sn.destOverride = sn.destOverride.filter(d => d !== 'fakedns');
+                changes.push({ rule: 'fakedns', tag: ib.tag || 'inbound', msg: 'Removed "fakedns" from sniffing.destOverride — no fakedns pool is defined' });
+            }
+        });
+    }
+
+    const remarks = String(cfg.remarks || (proxies[0] && proxies[0].tag) || '');
+    const xhttp = proxies.filter(ob => ob.streamSettings && /^(xhttp|splithttp)$/i.test(ob.streamSettings.network || ''));
+    const warnings = [];
+    if (!proxies.length) warnings.push('No VLESS / VMess / Trojan outbound in this config');
+    else if (!xhttp.length) warnings.push('No XHTTP outbound here — only the generic rules applied');
+    if (o.mode !== 'keep' && xhttp.length) warnings.push('The server inbound must accept mode ' + o.mode + ' (3x-ui: XHTTP Mode = auto or ' + o.mode + ')');
+    return { config: cfg, changes, warnings, remarks };
+}
+
+function xsfFixAll(raw, opts) {
+    const parsed = xsfSplitConfigs(raw);
+    if (parsed.error) return parsed;
+    const results = parsed.configs.map(c => xsfFixOne(c, opts));
+    const out = results.length === 1 ? results[0].config : results.map(r => r.config);
+    return { results, config: out, json: JSON.stringify(out, null, 2) };
+}
+
 // Node test harness: browsers ignore this block (`module` is undefined there).
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -3048,6 +3203,7 @@ if (typeof module !== 'undefined' && module.exports) {
         FIXER_DOMESTIC_DNS, TEMPLATE_A_FRAGMENT, buildTemplateA, buildTemplateB, describeConfigTechniques,
         SS_AEAD_METHODS, ssSourceServers, ssParsePins, analyzeShadowsocks, ssLink, buildShadowsocksConfig,
         RLY_DEFAULTS, RLY_FP_POOL, rlySource, rlyParseRelays, buildRelayConfig, analyzeRelayInput,
+        XSF_MODES, XSF_POLICY, XSF_DEFAULTS, xsfSplitConfigs, xsfFixOne, xsfFixAll,
         VCF_FRAGMENT, VCF_DEFAULTS, vcfList, vcfParseServers, vcfFix, vcfMemberPack,
         parseProxyURLSingle, parseProxyURL, parseVless, parseVmess, parseTrojan, parseShadowsocks, parseSocks, parseHttp,
         buildStreamSettings, buildProxyOutbound, buildChainOutbound, buildSingboxOutbound,

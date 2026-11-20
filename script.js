@@ -72,6 +72,7 @@
     const viewVcf = document.getElementById('view-vcf');
     const viewSs = document.getElementById('view-ss');
     const viewRly = document.getElementById('view-rly');
+    const viewXsf = document.getElementById('view-xsf');
 
     // Enhancer elements
     const enhancerInput = document.getElementById('enhancer-input');
@@ -1898,8 +1899,9 @@
         viewVcf.style.display = viewName === 'vcf' ? '' : 'none';
         viewSs.style.display = viewName === 'ss' ? '' : 'none';
         viewRly.style.display = viewName === 'rly' ? '' : 'none';
+        viewXsf.style.display = viewName === 'xsf' ? '' : 'none';
         document.querySelectorAll('.protocol-badges .badge').forEach(badge => {
-            const show = viewName === 'ss' ? badge.dataset.protocol === 'ss' : viewName === 'rly' ? badge.dataset.protocol === 'vless' : viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
+            const show = viewName === 'ss' ? badge.dataset.protocol === 'ss' : ['rly', 'xsf'].includes(viewName) ? badge.dataset.protocol === 'vless' : viewName === 'chain' || ['vless', 'trojan'].includes(badge.dataset.protocol)
                 || (['fixer', 'templates', 'vcf'].includes(viewName) && badge.dataset.protocol === 'vmess');
             badge.style.display = show ? '' : 'none';
         });
@@ -2973,5 +2975,94 @@
     btnCopyRlyLinks.addEventListener('click', () => copyTextWithFeedback(btnCopyRlyLinks, rlyLinksText, rlyHint));
     btnDownloadRly.addEventListener('click', () => {
         if (rlyOutputText) downloadText('iran-relay-config.json', rlyOutputText, 'application/json;charset=utf-8');
+    });
+
+    // ===== XHTTP Stability tab (xsf) =====
+    const xsfInput = document.getElementById('xsf-input');
+    const xsfClear = document.getElementById('xsf-clear');
+    const xsfFile = document.getElementById('xsf-file');
+    const xsfFilename = document.getElementById('xsf-filename');
+    const xsfInfo = document.getElementById('xsf-info');
+    const xsfMode = document.getElementById('xsf-mode');
+    const xsfChecks = { policy: 'xsf-policy', dropFragment: 'xsf-frag', dropNoise: 'xsf-noise', fakedns: 'xsf-fakedns', mux: 'xsf-mux' };
+    const btnXsf = document.getElementById('btn-xsf');
+    const xsfHint = document.getElementById('xsf-hint');
+    const xsfOutSection = document.getElementById('xsf-output-section');
+    const xsfOut = document.getElementById('xsf-output');
+    const xsfChanges = document.getElementById('xsf-changes');
+    const btnCopyXsf = document.getElementById('btn-copy-xsf');
+    const btnDownloadXsf = document.getElementById('btn-download-xsf');
+    const XSF_HINT = 'اول کانفیگ را بچسبانید';
+    let xsfOutputText = '';
+
+    function xsfSetHint(text, isError) {
+        xsfHint.textContent = text;
+        xsfHint.style.color = isError ? '#f87171' : '';
+    }
+
+    function xsfOptions() {
+        const o = { mode: xsfMode.value };
+        Object.keys(xsfChecks).forEach(k => { o[k] = document.getElementById(xsfChecks[k]).checked; });
+        return o;
+    }
+
+    function onXsfInput() {
+        const val = xsfInput.value.trim();
+        btnXsf.disabled = true;
+        xsfOutSection.style.display = 'none';
+        if (!val) { xsfInfo.innerHTML = ''; xsfSetHint(XSF_HINT, false); return; }
+        const r = xsfSplitConfigs(val);
+        if (r.error) {
+            xsfInfo.innerHTML = '<div class="error-msg">❌ ' + escapeHtml(r.error) + '</div>';
+            xsfSetHint(XSF_HINT, false);
+            return;
+        }
+        xsfInfo.innerHTML = '<div class="info-row"><span class="info-label">✅</span><span class="info-value">' +
+            r.configs.length + ' config(s): ' + escapeHtml(r.configs.map((c, i) => c.remarks || ('#' + (i + 1))).join(' · ')) + '</span></div>';
+        btnXsf.disabled = false;
+        xsfSetHint('دکمه‌ی اصلاح را بزنید', false);
+    }
+
+    function xsfBuild() {
+        const r = xsfFixAll(xsfInput.value, xsfOptions());
+        if (r.error) { xsfSetHint('❌ ' + r.error, true); return; }
+        xsfOutputText = r.json;
+        xsfOut.innerHTML = highlightJSON(r.config);
+        xsfChanges.innerHTML = r.results.map((res, i) => {
+            const title = '<div class="info-row"><span class="info-label">🧾</span><span class="info-value"><b>' +
+                escapeHtml(res.remarks || ('Config #' + (i + 1))) + '</b> — ' + (res.changes.length ? res.changes.length + ' change(s)' : 'nothing needed changing') + '</span></div>';
+            const rows = res.changes.map(c => '<div class="info-row"><span class="info-label">✔️</span><span class="info-value">[' +
+                escapeHtml(c.tag) + '] ' + escapeHtml(c.msg) + '</span></div>');
+            const warns = res.warnings.map(w => '<div class="info-row"><span class="info-label">⚠️</span><span class="info-value">' + escapeHtml(w) + '</span></div>');
+            return title + rows.join('') + warns.join('');
+        }).join('');
+        xsfOutSection.style.display = '';
+        const total = r.results.reduce((n, res) => n + res.changes.length, 0);
+        xsfSetHint(r.results.length + ' کانفیگ، ' + total + ' تغییر. JSON را کپی کنید (v2rayNG: + ← Import config from clipboard).', false);
+    }
+
+    btnXsf.addEventListener('click', xsfBuild);
+    xsfInput.addEventListener('input', () => { xsfFilename.textContent = ''; onXsfInput(); });
+    [xsfMode].concat(Object.values(xsfChecks).map(id => document.getElementById(id))).forEach(el =>
+        el.addEventListener('change', () => { if (xsfOutSection.style.display !== 'none') xsfBuild(); }));
+    xsfClear.addEventListener('click', () => {
+        xsfInput.value = '';
+        xsfFilename.textContent = '';
+        onXsfInput();
+        xsfInput.focus();
+    });
+    xsfFile.addEventListener('change', () => {
+        const files = Array.from(xsfFile.files || []);
+        if (!files.length) return;
+        Promise.all(files.map(f => f.text())).then(texts => {
+            xsfInput.value = texts.map(t => String(t || '').trim()).join('\n\n');
+            onXsfInput();
+            xsfFilename.textContent = files.map(f => f.name).join(', ');
+        });
+        xsfFile.value = '';
+    });
+    btnCopyXsf.addEventListener('click', () => copyTextWithFeedback(btnCopyXsf, xsfOutputText, xsfHint));
+    btnDownloadXsf.addEventListener('click', () => {
+        if (xsfOutputText) downloadText('xhttp-stable-config.json', xsfOutputText, 'application/json;charset=utf-8');
     });
 })();

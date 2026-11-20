@@ -1,9 +1,10 @@
 # Proxy Builder
 
-یک وب‌اپلیکیشن قدرتمند و مستقل با هشت ابزار:
+یک وب‌اپلیکیشن قدرتمند و مستقل با نه ابزار:
 
 <ul dir="rtl" style="direction: rtl; text-align: right;">
   <li><b>🛰️ Iran Relay</b> (تب پیش‌فرض) — بازسازی کانفیگ VLESS + WebSocket + TLS (JSON کامل، لینک <code>vless://</code> یا فایل) با الگوی سه کانفیگی که روی همه‌ی اپراتورهای ایران وصل‌اند: اعضای balancer که به سرورهای رله‌ی <b>داخل ایران</b> (با دامنه و با IP) وصل می‌شوند، SNI یک دامنه‌ی پوششی، Host یک برچسب کوتاه که سرور خارجی را انتخاب می‌کند، و یک مسیر مستقیم Cloudflare به‌عنوان پشتیبان.</li>
+  <li><b>🧯 XHTTP Stability</b> — اصلاح دسته‌جمعی کانفیگ‌های VLESS + XHTTP + REALITY که پینگ دارند ولی وسط دانلود یا استریم قطع می‌شوند: زمان‌های policy درست، حذف fragment کنار REALITY، حذف noise UDP روی TCP، حالت XHTTP <code>packet-up</code> (یا انتخاب خودتان) به‌جای <code>auto</code>، حذف <code>fakedns</code> بی‌مصرف — با فهرست همه‌ی تغییرات برای هر کانفیگ.</li>
   <li><b>🛠️ VPN Fixer v8</b> — نسخه‌ی ارتقایافته‌ی ابزار مستقل VPN Config Fixer: یک کانفیگ که با balancer چند مسیر را هم‌زمان امتحان می‌کند (با / بدون فرگمنت TLS، آی‌پی تمیز CDN، چند فینگرپرینت) و مسیری را که روی شبکه‌ی فعلی کار می‌کند نگه می‌دارد؛ مسیر اصلی fallback است.</li>
   <li><b>🔐 Shadowsocks</b> — بازسازی کانفیگ Shadowsocks (JSON یا لینک <code>ss://</code>) با الگوی کانفیگ‌هایی که روی همه‌ی اینترنت‌های ایران وصل می‌شوند: Shadowsocks ساده با رمز AEAD به یک سرور واسط داخل ایران، با دامنه‌ی پین‌شده در <code>dns.hosts</code>؛ چند سرور واسط یک balancer می‌شوند.</li>
   <li><b>🧪 Templates</b> — بازسازی کانفیگ بر اساس دو الگوی برگرفته از کانفیگ‌هایی که روی همراه اول وصل می‌شوند.</li>
@@ -128,6 +129,13 @@
 
 این ساختار تضمین می‌کند که آی‌پی خروجی و نهایی شما همان آی‌پی <b>کانفیگ ۲ (Chain Proxy&rlm;)</b> باشد، که هویتی ثابت و پایدار برای وب‌سایت‌هایی که از آنها بازدید می‌کنید، فراهم می‌آورد.
 
+### 🧯 XHTTP Stability
+<ul dir="rtl" style="direction: rtl; text-align: right;">
+  <li><b>ورودی چندتایی</b>: یک یا چند کانفیگ کامل JSON را بچسبانید (پشت سر هم یا آرایه‌ی JSON) یا چند فایل را با هم انتخاب کنید. یک کانفیگ ← یک شیء JSON؛ چند کانفیگ ← آرایه‌ی JSON.</li>
+  <li><b>قوانین</b> (هر کدام قابل خاموش کردن): <code>uplinkOnly</code> / <code>downlinkOnly</code> کمتر از پیش‌فرض Xray به ۲ / ۵ ثانیه و <code>handshake</code> به ۸ ثانیه می‌رسد (۱ ثانیه‌ی v2rayNG طرف دیگر را یک ثانیه بعد از تمام شدن یک طرف می‌بندد)؛ حذف <code>fragment</code> در finalmask TCP وقتی امنیت REALITY است؛ حذف <code>noise</code> در finalmask UDP روی ترنسپورت TCP؛ حالت XHTTP از <code>auto</code> به <code>packet-up</code> (یا <code>stream-up</code> / <code>stream-one</code> / دست‌نخورده) و حذف <code>mode</code> تکراری داخل <code>extra</code>؛ حذف <code>fakedns</code> از <code>sniffing.destOverride</code> وقتی fakedns تعریف نشده؛ خاموش کردن <code>mux</code> روی XHTTP.</li>
+  <li>بقیه‌ی کانفیگ (UUID، کلیدهای REALITY، DNS، routing، remarks) دست نمی‌خورد. اجرای دوباره روی کانفیگ اصلاح‌شده چیزی را عوض نمی‌کند.</li>
+</ul>
+
 ## 🛠️ نحوه استفاده
 
 برای پشتیبانی کامل از کلیپ‌بورد، این پوشه را به‌صورت محلی سرو کنید — مثلاً `python3 -m http.server` یا `npx serve` — سپس از طریق `http://localhost:PORT` (یا HTTPS) باز کنید؛ باز کردن مستقیم فایل (`file://`) به کپی دستی برمی‌گردد.
@@ -138,6 +146,13 @@
   <li>لینک <code>vless://</code> پنل (VLESS + WS + TLS پشت Cloudflare) یا کانفیگ کامل JSON را بچسبانید یا فایلش را انتخاب کنید.</li>
   <li>در تنظیمات رله، برای هر سرور رله‌ی داخل ایران یک خط بنویسید: آدرس (دامنه یا IP) و دامنه‌ی پوششی که گواهی‌اش روی رله است. برچسب سرور خارجی را خالی بگذارید تا بخش اول ساب‌دامین CDN استفاده شود.</li>
   <li><b>ساخت کانفیگ رله</b> را بزنید و JSON را در v2rayNG وارد کنید (<b>+ ← Import config from clipboard</b>). رله باید همان برچسب را به سرور خارجی شما نگاشت کند — راهنمای ساخت رله در 3x-ui را ببینید.</li>
+</ol>
+
+### 🧯 XHTTP Stability
+<ol dir="rtl" style="direction: rtl; text-align: right;">
+  <li>به تب <b>XHTTP Stability</b> بروید.</li>
+  <li>همه‌ی کانفیگ‌ها را بچسبانید (یا فایل‌ها را انتخاب کنید) و <b>اصلاح کانفیگ‌ها</b> را بزنید.</li>
+  <li>فهرست تغییرات هر کانفیگ را ببینید، JSON را کپی یا دانلود کنید و در v2rayNG وارد کنید. inbound سرور باید حالت XHTTP انتخاب‌شده را بپذیرد (<code>auto</code> همه را می‌پذیرد).</li>
 </ol>
 
 ### 🛠️ VPN Fixer v8
