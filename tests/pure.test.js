@@ -2287,3 +2287,57 @@ describe('Iran relay tab (WS + TLS through domestic relays)', () => {
         assert.deepEqual(rlyParseRelays('a.example.ir, www.example.org | safari # note\n\n'), [{ address: 'a.example.ir', sni: 'www.example.org', fp: 'safari' }]);
     });
 });
+
+describe('XHTTP Stability tab (xsf)', () => {
+    const { xsfSplitConfigs, xsfFixOne, xsfFixAll } = pure;
+    const RAW = fs.readFileSync(path.join(__dirname, 'fixtures', 'xhttp-reality-drops.json'), 'utf8');
+
+    it('applies every rule to the VLESS + XHTTP + REALITY config that drops mid-use', () => {
+        const r = xsfFixOne(JSON.parse(RAW), {});
+        const c = r.config;
+        const ss = c.outbounds[0].streamSettings;
+        assert.equal(ss.finalmask, undefined);
+        assert.equal(ss.xhttpSettings.mode, 'packet-up');
+        assert.deepEqual(ss.xhttpSettings.extra, { xPaddingBytes: '100-1000' });
+        assert.deepEqual(c.policy.levels['8'], { connIdle: 300, downlinkOnly: 5, handshake: 8, uplinkOnly: 2 });
+        assert.deepEqual(c.inbounds[0].sniffing.destOverride, ['http', 'tls', 'quic']);
+        assert.deepEqual(r.changes.map(x => x.rule).sort(), ['extra-mode', 'fakedns', 'fragment', 'mode', 'noise', 'policy']);
+        // untouched parts
+        const orig = JSON.parse(RAW);
+        assert.deepEqual(ss.realitySettings, orig.outbounds[0].streamSettings.realitySettings);
+        assert.deepEqual(c.routing, orig.routing);
+        assert.deepEqual(c.dns, orig.dns);
+        assert.equal(c.remarks, orig.remarks);
+    });
+
+    it('is idempotent and respects options', () => {
+        const once = xsfFixOne(JSON.parse(RAW), {}).config;
+        assert.equal(xsfFixOne(once, {}).changes.length, 0);
+        const keep = xsfFixOne(JSON.parse(RAW), { mode: 'stream-up', dropFragment: false, policy: false }).config;
+        const ss = keep.outbounds[0].streamSettings;
+        assert.equal(ss.xhttpSettings.mode, 'stream-up');
+        assert.equal(ss.finalmask.tcp[0].type, 'fragment');
+        assert.equal(ss.finalmask.udp, undefined);
+        assert.equal(keep.policy.levels['8'].uplinkOnly, 1);
+    });
+
+    it('keeps fragment on non-REALITY and fakedns when a pool exists', () => {
+        const c = JSON.parse(RAW);
+        c.outbounds[0].streamSettings.security = 'tls';
+        c.fakedns = [{ ipPool: '198.18.0.0/15', poolSize: 65535 }];
+        const r = xsfFixOne(c, {}).config;
+        assert.equal(r.outbounds[0].streamSettings.finalmask.tcp[0].type, 'fragment');
+        assert.ok(r.inbounds[0].sniffing.destOverride.includes('fakedns'));
+    });
+
+    it('splits batches: glued objects, arrays, and reports bad ones', () => {
+        assert.equal(xsfSplitConfigs(RAW + '\n\n' + RAW).configs.length, 2);
+        assert.equal(xsfSplitConfigs('[' + RAW + ',' + RAW + ']\n' + RAW).configs.length, 3);
+        assert.ok(xsfSplitConfigs('{"a": "}{"}').error.includes('outbounds'));
+        assert.ok(xsfSplitConfigs(RAW.slice(0, 100)).error);
+        const all = xsfFixAll(RAW + RAW, {});
+        assert.equal(all.results.length, 2);
+        assert.ok(Array.isArray(JSON.parse(all.json)));
+        assert.ok(!Array.isArray(JSON.parse(xsfFixAll(RAW, {}).json)));
+    });
+});

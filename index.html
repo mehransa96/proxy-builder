@@ -39,6 +39,7 @@
         <!-- Main Tabs -->
         <nav class="main-tabs">
             <button class="main-tab active" data-view="rly">🛰️ Iran Relay</button>
+            <button class="main-tab" data-view="xsf">🧯 XHTTP Stability</button>
             <button class="main-tab" data-view="vcf">🛠️ VPN Fixer v8</button>
             <button class="main-tab" data-view="ss">🔐 Shadowsocks</button>
             <button class="main-tab" data-view="templates">🧪 Templates</button>
@@ -586,6 +587,94 @@ aparat.com</textarea>
                         <li><strong>بدون fragment.</strong> چون مقصد داخلی است، تکه‌تکه کردن لازم نیست.</li>
                         <li><strong>انتخاب خودکار.</strong> balancer از نوع leastLoad با پینگ دقیقه‌ای؛ اگر همه‌ی رله‌ها قطع باشند، مسیر <code>ecloud</code> مستقیم از Cloudflare به سرور خارجی می‌رود.</li>
                         <li><strong>DNS داخلی.</strong> شکن و بگذر برای دامنه‌های ایرانی، UDP 443 (QUIC) مسدود، تبلیغات مسدود، ترافیک ایران مستقیم.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+
+        <!-- ===== View: XHTTP + REALITY stability fixer ===== -->
+        <div id="view-xsf" dir="rtl" lang="fa" style="display:none;">
+            <div class="config-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span class="card-icon">🧯</span>
+                        <div>
+                            <h2>XHTTP Stability — رفع قطعی وسط استفاده</h2>
+                            <p class="card-hint">برای کانفیگ‌های VLESS + XHTTP + REALITY که پینگ دارند ولی وسط دانلود یا استریم قطع می‌شوند.
+                                کانفیگ کامل JSON را بچسبانید (v2rayNG: Share ← Export full configuration). می‌توانید <b>چند کانفیگ را با هم</b> بچسبانید
+                                (پشت سر هم، یا آرایه‌ی JSON) یا چند فایل انتخاب کنید؛ همه با هم درست می‌شوند و برای هر کدام فهرست تغییرات نشان داده می‌شود.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <textarea id="xsf-input" class="config-input" dir="ltr"
+                        placeholder="Paste one or more full Xray JSON configs { ... } { ... }&#10;— or a JSON array [ {...}, {...} ]"
+                        spellcheck="false"></textarea>
+                    <button class="btn-clear" id="xsf-clear" title="پاک کردن">✕</button>
+                </div>
+                <div class="vcf-toolbar">
+                    <label class="btn-subtle" for="xsf-file">📂 انتخاب فایل (چندتایی)</label>
+                    <input type="file" id="xsf-file" accept=".txt,.json,.conf" multiple hidden>
+                    <span class="vcf-filename" id="xsf-filename"></span>
+                </div>
+                <div class="parsed-info" id="xsf-info" dir="ltr"></div>
+            </div>
+
+            <div class="settings-card">
+                <h3 class="settings-title">⚙️ قوانین اصلاح</h3>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label for="xsf-mode">حالت XHTTP (mode)</label>
+                        <select id="xsf-mode" dir="ltr">
+                            <option value="packet-up" selected>packet-up (پایدارتر — پیشنهادی)</option>
+                            <option value="stream-up">stream-up (سریع‌تر، اگر packet-up کند بود)</option>
+                            <option value="stream-one">stream-one</option>
+                            <option value="keep">keep (دست نزن)</option>
+                        </select>
+                    </div>
+                    <div class="setting-item fixer-checks">
+                        <label><input type="checkbox" id="xsf-policy" checked> policy: uplinkOnly / downlinkOnly ۱ ثانیه ← ۲ و ۵، handshake ← ۸</label>
+                        <label><input type="checkbox" id="xsf-frag" checked> حذف fragment (finalmask tcp) کنار REALITY</label>
+                        <label><input type="checkbox" id="xsf-noise" checked> حذف noise UDP روی خروجی TCP</label>
+                        <label><input type="checkbox" id="xsf-fakedns" checked> حذف fakedns از destOverride وقتی fakedns تعریف نشده</label>
+                        <label><input type="checkbox" id="xsf-mux" checked> خاموش کردن mux روی XHTTP</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="generate-section">
+                <button class="btn-generate" id="btn-xsf" disabled>
+                    <span class="btn-icon">🧯</span> اصلاح کانفیگ‌ها
+                </button>
+                <p class="generate-hint" id="xsf-hint">اول کانفیگ را بچسبانید</p>
+            </div>
+
+            <div class="output-section" id="xsf-output-section" style="display:none;">
+                <div class="output-header">
+                    <h3>📋 کانفیگ اصلاح‌شده</h3>
+                    <div class="output-actions">
+                        <button class="btn-copy" id="btn-copy-xsf" title="Copy to clipboard">
+                            <span class="copy-icon">📋</span> Copy
+                        </button>
+                        <button class="btn-download" id="btn-download-xsf" title="Download as .json">
+                            <span class="download-icon">💾</span> .json
+                        </button>
+                    </div>
+                </div>
+                <div class="parsed-info" id="xsf-changes" dir="ltr"></div>
+                <pre class="output-code" dir="ltr"><code id="xsf-output"></code></pre>
+            </div>
+
+            <details class="info-section">
+                <summary>ℹ️ این تب دقیقاً چه چیزی را عوض می‌کند</summary>
+                <div class="info-content">
+                    <ul>
+                        <li><strong>policy.</strong> با <code>uplinkOnly: 1</code> و <code>downlinkOnly: 1</code>، هر وقت یک طرف ارتباط تمام شود Xray طرف دیگر را ۱ ثانیه بعد می‌بندد؛ روی XHTTP دانلود و استریم وسط کار قطع می‌شود. مقدارها به پیش‌فرض Xray (۲ و ۵) و handshake به ۸ می‌رسد. (۰ نمی‌گذاریم، چون ۰ یعنی بستن فوری.)</li>
+                        <li><strong>fragment کنار REALITY.</strong> REALITY خودش SNI را پنهان می‌کند؛ تکه‌تکه کردن هر اتصال جدید XHTTP فقط کندی و قطعی می‌آورد.</li>
+                        <li><strong>noise UDP.</strong> روی خروجی TCP اصلاً اعمال نمی‌شود.</li>
+                        <li><strong>mode.</strong> <code>auto</code> با REALITY معمولاً <code>stream-one</code> می‌شود که روی اینترنت ایران زود قطع می‌شود. <code>packet-up</code> پایدارتر است. حالت inbound سرور باید <code>auto</code> یا همین حالت باشد. <code>mode</code> تکراری داخل <code>extra</code> پاک می‌شود.</li>
+                        <li><strong>fakedns.</strong> وقتی fakedns تعریف نشده، از <code>destOverride</code> حذف می‌شود.</li>
+                        <li>بقیه‌ی کانفیگ (UUID، کلید REALITY، DNS، routing، remarks) دست نمی‌خورد. همه چیز داخل مرورگر شما انجام می‌شود.</li>
                     </ul>
                 </div>
             </details>
@@ -1442,4 +1531,4 @@ aparat.com</textarea>
     <script src="script.js"></script>
 </body>
 
-</html>
+</html>

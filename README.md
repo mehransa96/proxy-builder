@@ -2,16 +2,17 @@
 
 🌐 **[فارسی](README-fa.md)** | [English](README.md)
 
-A powerful, standalone web application with eight tools:
+A powerful, standalone web application with nine tools:
 
 1. **🛰️ Iran Relay** (default tab) — rebuild your VLESS + WebSocket + TLS config (full JSON, `vless://` links or a file) in the layout of three configs that connect on every Iranian network: balancer members that reach relay servers **inside Iran** (by hostname and by IP) with a cover-domain SNI and a short Host label choosing the foreign exit, plus a direct Cloudflare route as fallback.
-2. **🛠️ VPN Fixer v8** — the upgraded standalone VPN Config Fixer: one config whose balancer tries several routes at once (TLS fragment / no fragment, clean CDN IPs, several fingerprints) and keeps the one that works on the current network, with the original route as fallback.
-3. **🔐 Shadowsocks** — rebuild a Shadowsocks config (JSON or `ss://` links) in the layout of configs that connect on every Iranian network: plain AEAD Shadowsocks to a relay server inside Iran, its domain pinned in `dns.hosts`; several relays become one balancer.
-4. **🧪 Templates** — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
-5. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
-6. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
-7. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
-8. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
+2. **🧯 XHTTP Stability** — batch-fix VLESS + XHTTP + REALITY client configs that ping but drop mid-download or mid-stream: sane policy timeouts, no fragment next to REALITY, no UDP noise on TCP, XHTTP mode `packet-up` (or your choice) instead of `auto`, no stray `fakedns` — with a list of every change per config.
+3. **🛠️ VPN Fixer v8** — the upgraded standalone VPN Config Fixer: one config whose balancer tries several routes at once (TLS fragment / no fragment, clean CDN IPs, several fingerprints) and keeps the one that works on the current network, with the original route as fallback.
+4. **🔐 Shadowsocks** — rebuild a Shadowsocks config (JSON or `ss://` links) in the layout of configs that connect on every Iranian network: plain AEAD Shadowsocks to a relay server inside Iran, its domain pinned in `dns.hosts`; several relays become one balancer.
+5. **🧪 Templates** — rebuild your config around one of two layouts taken from configs that connect on MCI: a REALITY-style single proxy with finalmask and a pinned server IP, or a CDN multi-address balancer.
+6. **🩺 Config Fixer** — diagnose and repair a full Xray JSON config (or a link) for stock v2rayNG: browser fingerprint, classic fragment via `dialerProxy`, DNS-loop fix, clean IP, and a multi-variant test pack.
+7. **🛡️ ECH** — enhance a **VLESS** or **Trojan** URL by injecting `fp` (TLS fingerprint, default `chrome`) and `ech` (ECH Config List) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client.
+8. **🧬 Fragment + Fingerprint** — enhance a **VLESS** or **Trojan** URL by injecting `cs` (cipher suites), `fm` (fragment mask) and `fp` (TLS fingerprint) parameters, plus a server (IP/domain) override — producing a link ready to import into your own client. Its **📥 Subscription** sub-tab fetches a subscription link (or pastes its contents) to batch-enhance every **VLESS**/**Trojan** config inside, with copy/`.txt`/base64 export.
+9. **🔗 Chain Builder** — chain two proxy configurations into a single **Xray** or **Sing-box** JSON configuration for enhanced connection stability and fixed IP masking.
 
 All processing happens in your browser. No data is sent to any server — fetching a subscription link contacts only the provider URL you entered, and pasted or dropped content never leaves your browser.
 
@@ -20,6 +21,11 @@ All processing happens in your browser. No data is sent to any server — fetchi
 ### 🛰️ Iran Relay (default tab)
 - **Import**: paste or pick a file — a full Xray JSON config exported from your panel or client, `vless://` links (one per line) or a base64 subscription. A member whose WebSocket Host is a bare label (`s1`) is read as a relay member; anything else is your foreign server behind the CDN (UUID, path and fallback come from it).
 - **Build**: the exact layout of the working configs (round-trip tested byte for byte) — one `lb-N` member per relay line (`address  cover-domain  [fingerprint]`), WebSocket Host = exit label, ALPN `h2`, rotating chrome / safari / edge fingerprints, no fragment; `leastLoad` balancer + `burstObservatory` (connectivity `snapp.ir`) with the CDN route `ecloud` as fallback; Shecan + Begzar for Iranian domains, UDP 443 and ads blocked, Iranian traffic direct. Also outputs one `vless://` link per member.
+
+### 🧯 XHTTP Stability
+- **Batch input**: paste one or more full Xray JSON configs (glued one after another, or a JSON array), or pick several files at once. One config out → one JSON object; several → a JSON array.
+- **Rules** (each can be switched off): policy `uplinkOnly` / `downlinkOnly` below Xray's defaults raised to 2 / 5 s and `handshake` to 8 s (v2rayNG's 1 s closes the other direction one second after either side finishes); finalmask TCP `fragment` removed when security is REALITY; finalmask UDP `noise` removed on TCP transports; XHTTP `mode: auto` → `packet-up` (or `stream-up` / `stream-one` / keep) and the duplicate `mode` inside `extra` removed; `fakedns` dropped from `sniffing.destOverride` when no fakedns pool exists; `mux` disabled on XHTTP.
+- Everything else (UUID, REALITY keys, DNS, routing, remarks) is passed through. Re-running on a fixed config changes nothing.
 
 ### 🛠️ VPN Fixer v8
 - **Same pipeline as the standalone v7 page**, now inside the app: panel domain → connection domain swap, stale CDN pins and IPv6 removed from `dns.hosts`, `UseIPv4`, SNI / ws Host filled in (`headers.Host` → `host`), policy timings, `freedom` / sniffing clean-up, history of the last five fixes. No personal domains are built in: your panel → connection domain list is stored on your device only.
@@ -101,6 +107,11 @@ For full clipboard support, serve this folder locally — e.g. `python3 -m http.
 2. Paste your panel's `vless://` link (VLESS + WS + TLS behind Cloudflare) or full JSON config, or pick the file.
 3. Under the relay options, enter one line per relay server inside Iran: its address (hostname or IP) and the cover domain whose certificate the relay serves. Leave the exit label empty to use the first part of your CDN subdomain.
 4. Press **ساخت کانفیگ رله** and import the JSON in v2rayNG (**+ → Import config from clipboard**). The relay must map that label to your foreign server — see the 3x-ui relay guide.
+
+### 🧯 XHTTP Stability
+1. Switch to the **XHTTP Stability** tab.
+2. Paste all your configs (or pick the files) and press **اصلاح کانفیگ‌ها**.
+3. Read the per-config change list, then copy or download the JSON and import it in v2rayNG. The server inbound must accept the chosen XHTTP mode (`auto` accepts all).
 
 ### 🛠️ VPN Fixer v8
 1. Switch to the **VPN Fixer v8** tab.
